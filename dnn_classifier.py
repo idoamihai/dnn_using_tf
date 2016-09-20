@@ -20,22 +20,21 @@ def accuracy(predictions, labels):
   return (100.0 * np.sum(np.argmax(predictions, 1) == np.argmax(labels, 1))
           / predictions.shape[0])
   
-def grid_search_dnn(param_grid,x_train,y_train,example_rows=1,num_labels=2,n_folds=5):
+def grid_search_dnn(param_grid,x_train,y_train,example_rows=1,num_labels=2,n_folds=5,scoring=metrics.accuracy_score):
     max_score = 0
     max_params = {}
     grid = grid_search.ParameterGrid(param_grid)
     grid_search_scores = []
     for params_ in grid:
         clf = dnn(params_)
-        score = clf.cv_score(x_train,y_train,example_rows,num_labels,n_folds)
+        score = clf.cv_score(x_train,y_train,example_rows,num_labels,n_folds,scoring=scoring)
         if score > max_score:
             max_score = score
             max_params = params_
         dict_ = params_
         dict_['score'] = score
         grid_search_scores.append(dict_) 
-    return grid_search_scores,max_params,max_score
-
+    return grid_search_scores,max_params,max_score  
 
 class dnn():
     
@@ -45,6 +44,10 @@ class dnn():
     def cv_score(self,x_train,y_train,example_rows,num_labels,n_folds,**kwargs):
         #normally you wouldn't use early-stopping here but when you have separate training/validation/test sets
         #get parameter values
+        if 'scoring' in kwargs:
+            scoring = kwargs['scoring']
+        else:
+            scoring = metrics.accuracy_score
         if 'patience' in self.params:
             patience = self.params['patience']
             patience_increase = 2 #wait this much longer when a new best is found
@@ -179,7 +182,7 @@ class dnn():
                           if ((patience_steps == patience_increase) and (step >= patience)):
                               kf_pred_proba = valid_prediction.eval()
                               kf_pred = np.argmax(kf_pred_proba,axis=1)
-                              kscores.append(metrics.accuracy_score(y_valid,kf_pred))
+                              kscores.append(scoring(y_valid,kf_pred))
                               break   
                   #proba = valid_prediction.eval()
                   #p = np.argmax(proba,axis=1)
@@ -190,7 +193,7 @@ class dnn():
               #print('Test accuracy: %.1f%%' % accuracy(test_prediction.eval(), test_labels))
               #test_pred_proba = test_prediction.eval()
               #test_pred = np.argmax(test_pred_proba,axis=1)
-              kscores.append(metrics.accuracy_score(y_valid,kf_pred))
+              kscores.append(scoring(y_valid,kf_pred))
         return np.mean(kscores)
         
     def test_score(self,x_train,y_train,x_test,y_test,example_rows,num_labels,**kwargs):
@@ -488,7 +491,10 @@ class dnn():
                 saver.restore(session, 'model_test.ckpt')
                 test_pred_proba = test_prediction.eval()
                 test_pred = np.argmax(test_pred_proba,axis=1) 
-                return test_pred
+                if 'predict_proba' in kwargs:
+                    return test_pred_proba
+                else:
+                    return test_pred
   
         
 
