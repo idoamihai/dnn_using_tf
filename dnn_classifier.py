@@ -27,7 +27,7 @@ def grid_search_dnn(param_grid,x_train,y_train,example_rows=1,num_labels=2,n_fol
     grid_search_scores = []
     for params_ in grid:
         clf = dnn(params_)
-        score = clf.cv_score(x_train,y_train,example_rows,num_labels,n_folds,scoring=scoring)
+        score = clf.cv_score(x_train,y_train,example_rows,num_labels,n_folds,scoring=scoring,predict_proba=False)
         if score > max_score:
             max_score = score
             max_params = params_
@@ -61,8 +61,8 @@ class dnn():
             y_train_ = y_train.iloc[train_idx]
             x_valid = x_train.iloc[valid_idx]
             y_valid = y_train.iloc[valid_idx]
-            dnn.fit_predict(self,x_train_,y_train_,example_rows,num_labels,is_train=True,predict_proba=False)
-            valid_prediction = dnn.fit_predict(self,x_valid,y_valid,example_rows,num_labels,is_train=False)
+            dnn.fit_predict(self,x_train_,y_train_,example_rows,num_labels,is_train=True)
+            valid_prediction = dnn.fit_predict(self,x_valid,y_valid,example_rows,num_labels,is_train=False,predict_proba=False)
             kscores.append(scoring(y_valid,valid_prediction))
         return np.mean(kscores)       
        
@@ -70,8 +70,8 @@ class dnn():
         #refit and predict on test
         if 'patience' in self.params:
             patience = self.params['patience']
-            patience_increase = 2 #wait this much longer when a new best is found
-            improvement_threshold = 0.995 # a relative improvement of this much is considered significant
+            patience_increase = 5 #wait this much longer when a new best is found
+            improvement_threshold = 0.999 # a relative improvement of this much is considered significant
         if 'random_seed' in self.params:
             random.seed(self.params['random_seed'])
         if 'evaluation_frequency' in self.params:
@@ -236,7 +236,7 @@ class dnn():
                 saver.restore(session, 'model_test.ckpt')
                 pred_proba = train_prediction.eval()
                 pred_class = np.argmax(pred_proba,axis=1) 
-                if 'predict_proba':
+                if predict_proba==True:
                     return pred_proba
                 else:
                     return pred_class
