@@ -354,6 +354,10 @@ class dnn():
             improvement_threshold = 0.995 # a relative improvement of this much is considered significant
         if 'random_seed' in self.params:
             random.seed(self.params['random_seed'])
+        if 'evaluation_frequency' in self.params:
+            evaluation_frequency = self.params['evaluation_frequency']
+        else:
+            evaluation_frequency = 100
         example_columns = x.shape[1]
         num_steps = self.params['num_steps']
         hidden = self.params['hidden']
@@ -465,24 +469,31 @@ class dnn():
             # arrays.
             if is_train:
                 if 'x_valid' and 'y_valid' in kwargs:
-                    _, l, predictions, vl = session.run([optimizer, loss, train_prediction, valid_loss],
+                    _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, valid_loss, valid_prediction],
                         feed_dict = {beta_regul: l2_regul})
                 else:
                     _, l, predictions = session.run([optimizer, loss, train_prediction],
                         feed_dict = {beta_regul: l2_regul})
-                if (step % 10 == 0):
-                  print('Loss at step %d: %f' % (step, l))
-                  
+                if (step % evaluation_frequency == 0):
+                  print('Loss at step %d: %f' % (step, l))                  
                   print('Training accuracy: %.1f%%' % accuracy(
                     predictions, train_labels))
+                  if 'x_valid' and 'y_valid' in kwargs:
+                      print('Validation Loss at step %d: %f' % (step, vl))
+                      print('Validation accuracy: %.1f%%' % accuracy(
+                                 vp, valid_labels))
                   #print('Validation accuracy: %.1f%%' % accuracy(
                   if 'patience' in self.params:
-                      if vl - best_validation_loss >= improvement_threshold:
-                          best_validation_loss = vl
-                          patience_steps = 0
+                      if vl < best_validation_loss:
+                          if vl < best_validation_loss*improvement_threshold:
+                              patience_steps = 0
+                              best_validation_loss = vl
+                          else:
+                              patience_steps += 1
+                              best_validation_loss = vl
                       else:
                           patience_steps += 1
-                          if ((patience_steps == patience_increase) and (step >= patience)):
+                          if ((patience_steps > patience_increase) and (step >= patience)):
                               saver.save(session, 'model_test.ckpt')
                               break  
                   else:
