@@ -48,23 +48,11 @@ class dnn():
             scoring = kwargs['scoring']
         else:
             scoring = metrics.accuracy_score
-        if 'patience' in self.params:
-            patience = self.params['patience']
-            patience_increase = 2 #wait this much longer when a new best is found
-            improvement_threshold = 0.995 # a relative improvement of this much is considered significant
-        if 'random_seed' in self.params:
-            random.seed(self.params['random_seed'])
-        example_columns = x_train.shape[1]
-        num_steps = self.params['num_steps']
-        hidden = self.params['hidden'] #number of units per layer as list
-        l2_regul = self.params['l2_regul'] #give 0 for no l2 regularization
-        keep_prob = self.params['keep_prob'] #give 1 for no dropout
         if 'random_seed' in self.params:
             kf = cross_validation.StratifiedKFold(y=y_train,
-                              n_folds=n_folds,shuffle=True,random_state = self.params['random_seed'])
+              n_folds=n_folds,shuffle=True,random_state = self.params['random_seed'])
         else:
             kf = cross_validation.StratifiedKFold(y=y_train,n_folds=n_folds,shuffle=True)  
-
         kscores = []
         fold = 0
         for train_idx, valid_idx in kf:
@@ -73,127 +61,9 @@ class dnn():
             y_train_ = y_train.iloc[train_idx]
             x_valid = x_train.iloc[valid_idx]
             y_valid = y_train.iloc[valid_idx]
-            
-            train_dataset, train_labels = reformat(np.array(x_train_), np.array(y_train_),num_labels,example_rows,example_columns)
-            valid_dataset, valid_labels = reformat(np.array(x_valid), np.array(y_valid),num_labels,example_rows,example_columns)
-            #test_dataset, test_labels = reformat(np.array(x_test), np.array(y_test),num_labels,example_rows,example_columns)
-            
-            if 'scale' in self.params:
-                scaler = preprocessing.StandardScaler()
-                scaler.fit(train_dataset)        
-                train_dataset = scaler.transform(train_dataset)
-                valid_dataset = scaler.transform(valid_dataset)
-                #test_dataset = scaler.transform(test_dataset)
-        
-            graph = tf.Graph()
-            with graph.as_default():
-              tf_train_dataset = tf.constant(train_dataset)
-              tf_train_labels = tf.constant(train_labels)
-              tf_valid_dataset = tf.constant(valid_dataset)
-              tf_valid_labels = tf.constant(valid_labels)
-              beta_regul = tf.placeholder(tf.float32)
-              
-              # Variables.
-              weights = {}
-              biases = {}
-              weights[0] = tf.Variable(tf.truncated_normal([example_rows * example_columns,
-                                                          hidden[0]],
-                                                          stddev= 0.1))
-              biases[0] = tf.Variable(tf.zeros([hidden[0]]))
-              for i in np.arange(1,len(hidden)):
-                  weights[i] = tf.Variable(
-                    tf.truncated_normal([hidden[i-1], hidden[i]],
-                                        stddev= 0.1))
-                  biases[i] = tf.Variable(tf.zeros([hidden[i]]))
-              weights[len(weights)] = tf.Variable(
-                      tf.truncated_normal([hidden[-1], num_labels],
-                            stddev= 0.1))  
-              biases[len(biases)] = tf.Variable(tf.zeros([num_labels]))
-              # Training computation.
-              # We multiply the inputs with the weight matrix, and add biases. We compute
-              # the softmax and cross-entropy . We take the average of this
-              # cross-entropy across all training examples: that's our loss.
-              layer = {}
-              dropout = {}
-              layer[0] = tf.nn.relu(tf.matmul(tf_train_dataset,weights[0]) + biases[0])
-              dropout[0] = tf.nn.dropout(layer[0], keep_prob=keep_prob)
-              for i in np.arange(1,len(weights)-1):
-                  layer[i] = tf.nn.relu(tf.matmul(dropout[i-1],weights[i]) + biases[i])
-                  dropout[i] = tf.nn.dropout(layer[i], keep_prob=keep_prob)
-              logits = tf.matmul(dropout[len(dropout)-1],weights[len(weights)-1]) + biases[len(biases)-1]     
-                  
-              loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels)) 
-              reg = 0
-              for i in range(len(weights)):
-                reg += beta_regul * tf.nn.l2_loss(weights[i])
-              loss = loss + reg
-              # Optimizer.
-              # We are going to find the minimum of this loss using gradient descent.
-              global_step = tf.Variable(0)
-              learning_rate = tf.train.exponential_decay(
-                0.5, global_step, 1000, 0.5, staircase=True)
-            
-              optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss,
-                global_step = global_step)
-              
-              # Predictions for the training, validation, and test data.
-              # These are not part of training, but merely here so that we can report
-              # accuracy figures as we train.
-              train_prediction = tf.nn.softmax(logits)
-              valid_layer = {}
-              valid_layer[0] = tf.nn.relu(tf.matmul(tf_valid_dataset,weights[0])+biases[0])
-              for i in np.arange(1,len(weights)-1):
-                  valid_layer[i] = tf.nn.relu(tf.matmul(valid_layer[i-1],weights[i]) + biases[i])
-              valid_logits = tf.matmul(valid_layer[len(valid_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1]
-              valid_prediction = tf.nn.softmax(valid_logits)
-              valid_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(valid_logits,tf_valid_labels))
-              
-            
-            with tf.Session(graph=graph) as session:
-              # This is a one-time operation which ensures the parameters get initialized as
-              # we described in the graph: random weights for the matrix, zeros for the
-              # biases. 
-              tf.initialize_all_variables().run()
-              print('Initialized')
-              best_validation_loss = np.inf
-              patience_steps = 0
-              for step in range(num_steps):
-                # Run the computations. We tell .run() that we want to run the optimizer,
-                # and get the loss value and the training predictions returned as numpy
-                # arrays.
-                _, l, predictions,vl = session.run([optimizer, loss, train_prediction, valid_loss],
-                    feed_dict = {beta_regul: l2_regul})
-                if (step % 10 == 0):
-                  print('Loss at step %d: %f' % (step, l))
-                  print('Training accuracy: %.1f%%' % accuracy(
-                    predictions, train_labels))
-                  # Calling .eval() on valid_prediction is basically like calling run(), but
-                  # just to get that one numpy array. Note that it recomputes all its graph
-                  # dependencies.
-                  print('Validation accuracy: %.1f%%' % accuracy(
-                    valid_prediction.eval(), valid_labels))
-                  print('Validation Loss at step %d: %f' % (step, vl))
-                  if 'patience' in self.params:
-                      if vl - best_validation_loss >= improvement_threshold:
-                          best_validation_loss = vl
-                          patience_steps = 0
-                      else:
-                          patience_steps += 1
-                          if ((patience_steps == patience_increase) and (step >= patience)):
-                              kf_pred_proba = valid_prediction.eval()
-                              kf_pred = np.argmax(kf_pred_proba,axis=1)
-                              kscores.append(scoring(y_valid,kf_pred))
-                              break   
-                  #proba = valid_prediction.eval()
-                  #p = np.argmax(proba,axis=1)
-                  #f1 = metrics.f1_score(valid_labels[:,1],p)
-                  #print ('f1 score: %.1f%%' % f1)
-                kf_pred_proba = valid_prediction.eval()
-                kf_pred = np.argmax(kf_pred_proba,axis=1)
-              #print('Test accuracy: %.1f%%' % accuracy(test_prediction.eval(), test_labels))
-              #test_pred_proba = test_prediction.eval()
-              #test_pred = np.argmax(test_pred_proba,axis=1)
-              kscores.append(scoring(y_valid,kf_pred))
+            dnn.fit_predict(self,x_train_,y_train_,example_rows,num_labels,is_train=True)
+            valid_prediction = dnn.fit_predict(self,x_valid,y_valid,example_rows,num_labels,is_train=False)
+            kscores.append(scoring(y_valid,valid_prediction))
         return np.mean(kscores)
         
     def test_score(self,x_train,y_train,x_test,y_test,example_rows,num_labels,**kwargs):
@@ -364,18 +234,20 @@ class dnn():
         l2_regul = self.params['l2_regul']
         keep_prob = self.params['keep_prob']
         train_dataset, train_labels = reformat(np.array(x), np.array(y),num_labels,example_rows,example_columns)
+        if 'x_test' and 'y_test' in kwargs:
+            x_test, y_test = kwargs['x_test'],kwargs['y_test']
+            test_dataset, test_labels = reformat(np.array(x_test), np.array(y_test),num_labels,example_rows,example_columns)
         if 'x_valid' and 'y_valid' in kwargs:
             x_valid, y_valid = kwargs['x_valid'],kwargs['y_valid']
             valid_dataset, valid_labels = reformat(np.array(x_valid), np.array(y_valid),num_labels,example_rows,example_columns)
-        test_dataset, test_labels = reformat(np.array(x), np.array(y),num_labels,example_rows,example_columns)
         if 'scale' in self.params:
             scaler = preprocessing.StandardScaler()
             scaler.fit(train_dataset)        
             train_dataset = scaler.transform(train_dataset)
             if 'x_valid' and 'y_valid' in kwargs:
                 valid_dataset = scaler.transform(valid_dataset)
-            test_dataset = scaler.transform(test_dataset)
-        
+            if 'x_test' and 'y_test' in kwargs:
+                test_dataset = scaler.transform(test_dataset)        
         graph = tf.Graph()
         with graph.as_default():
           tf_train_dataset = tf.constant(train_dataset)
@@ -383,8 +255,9 @@ class dnn():
           if 'x_valid' and 'y_valid' in kwargs:
               tf_valid_dataset = tf.constant(valid_dataset)
               tf_valid_labels = tf.constant(valid_labels)
-          tf_test_dataset = tf.constant(test_dataset)
-          beta_regul = tf.placeholder(tf.float32)
+          if 'x_test' and 'y_test' in kwargs:
+              tf_test_dataset = tf.constant(test_dataset)
+              beta_regul = tf.placeholder(tf.float32)
     
           # Variables.
           weights = {}
@@ -447,12 +320,13 @@ class dnn():
           #lay2_valid = tf.nn.relu(tf.matmul(lay1_valid,weights2)+biases2)
           #valid_prediction = tf.nn.softmax(
           #  tf.matmul(lay2_valid, weights3) + biases3)
-          test_layer = {}
-          test_layer[0] = tf.nn.relu(tf.matmul(tf_test_dataset,weights[0])+biases[0])
-          for i in np.arange(1,len(weights)-1):
-              test_layer[i] = tf.nn.relu(tf.matmul(test_layer[i-1],weights[i]) + biases[i])
-          test_prediction = tf.nn.softmax(
-                tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])               
+          if 'x_test' and 'y_test' in kwargs:
+              test_layer = {}
+              test_layer[0] = tf.nn.relu(tf.matmul(tf_test_dataset,weights[0])+biases[0])
+              for i in np.arange(1,len(weights)-1):
+                  test_layer[i] = tf.nn.relu(tf.matmul(test_layer[i-1],weights[i]) + biases[i])
+              test_prediction = tf.nn.softmax(
+                    tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])               
 
         with tf.Session(graph=graph) as session:
           # This is a one-time operation which ensures the parameters get initialized as
@@ -483,7 +357,7 @@ class dnn():
                       print('Validation accuracy: %.1f%%' % accuracy(
                                  vp, valid_labels))
                   #print('Validation accuracy: %.1f%%' % accuracy(
-                  if 'patience' in self.params:
+                  if 'patience' in self.params and ('x_valid' and 'y_valid' in kwargs):
                       if vl < best_validation_loss:
                           if vl < best_validation_loss*improvement_threshold:
                               patience_steps = 0
@@ -495,17 +369,20 @@ class dnn():
                           patience_steps += 1
                           if ((patience_steps > patience_increase) and (step >= patience)):
                               saver.save(session, 'model_test.ckpt')
+                          if 'x_test' and 'y_test' in kwargs:
+                              print('Test accuracy: %.1f%%' % accuracy(
+                                       test_prediction.eval(),test_labels))
                               break  
                   else:
                       saver.save(session, 'model_test.ckpt')
             else:
                 saver.restore(session, 'model_test.ckpt')
-                test_pred_proba = test_prediction.eval()
-                test_pred = np.argmax(test_pred_proba,axis=1) 
+                pred_proba = train_prediction
+                pred_class = np.argmax(pred_proba,axis=1) 
                 if 'predict_proba' in kwargs:
-                    return test_pred_proba
+                    return pred_proba
                 else:
-                    return test_pred
+                    return pred_class
   
         
 
