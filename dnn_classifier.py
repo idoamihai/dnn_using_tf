@@ -6,7 +6,7 @@ Created on Wed Sep 14 16:32:35 2016
 """
 
 import tensorflow as tf
-import numpy as np
+import numpy as np, pandas as pd
 from sklearn import cross_validation, preprocessing, metrics, grid_search
 import random
 
@@ -77,7 +77,7 @@ class dnn():
         if 'evaluation_frequency' in self.params:
             evaluation_frequency = self.params['evaluation_frequency']
         else:
-            evaluation_frequency = 100
+            evaluation_frequency = 10
         example_columns = x.shape[1]
         num_steps = self.params['num_steps']
         hidden = self.params['hidden']
@@ -181,6 +181,7 @@ class dnn():
               test_prediction = tf.nn.softmax(
                     tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])               
 
+             
         with tf.Session(graph=graph) as session:
           # This is a one-time operation which ensures the parameters get initialized as
           # we described in the graph: random weights for the matrix, zeros for the
@@ -190,18 +191,24 @@ class dnn():
           print('Initialized')
           best_validation_loss = np.inf
           patience_steps = 0
+          tracking = []
           for step in range(num_steps):
             # Run the computations. We tell .run() that we want to run the optimizer,
             # and get the loss value and the training predictions returned as numpy
             # arrays.
             if is_train:
                 if 'x_valid' and 'y_valid' in kwargs:
-                    _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, valid_loss, valid_prediction],
+                    _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, 
+                             valid_loss, valid_prediction],
                         feed_dict = {beta_regul: l2_regul})
                 else:
                     _, l, predictions = session.run([optimizer, loss, train_prediction],
                         feed_dict = {beta_regul: l2_regul})
                 if (step % evaluation_frequency == 0):
+                  if 'x_valid' and 'y_valid' in kwargs:
+                      tracking.append([step,l,vl]) #track the model step loss
+                  else:
+                      tracking.append([step,l])
                   print('Loss at step %d: %f' % (step, l))                  
                   print('Training accuracy: %.1f%%' % accuracy(
                     predictions, train_labels))
@@ -231,7 +238,7 @@ class dnn():
                 elif step == num_steps-1:
                   if 'x_test' and 'y_test' in kwargs:
                       print('Test accuracy: %.1f%%' % accuracy(
-                               test_prediction.eval(),test_labels))                  
+                               test_prediction.eval(),test_labels)) 
             else:
                 saver.restore(session, 'model_test.ckpt')
                 pred_proba = train_prediction.eval()
@@ -240,6 +247,8 @@ class dnn():
                     return pred_proba
                 else:
                     return pred_class
+        if is_train:
+            return tracking
   
         
 
