@@ -244,6 +244,7 @@ class dnn():
                   #print('Validation accuracy: %.1f%%' % accuracy(
                   if 'patience' in self.params and ('x_valid' and 'y_valid' in kwargs):
                       if vl < best_validation_loss:
+                          saver.save(session, 'model_best.ckpt')
                           if vl < best_validation_loss*improvement_threshold:
                               patience_steps = 0
                               best_validation_loss = vl
@@ -253,19 +254,19 @@ class dnn():
                       else:
                           patience_steps += 1
                           if ((patience_steps > patience_increase) and (step >= patience)):
-                              saver.save(session, 'model_test.ckpt')
                               if 'x_test' and 'y_test' in kwargs:
+                                  saver.restore(session, 'model_best.ckpt')
                                   print('Test accuracy: %.1f%%' % accuracy(
                                            test_prediction.eval(),test_labels))
                               break  
                   else:
-                      saver.save(session, 'model_test.ckpt')  
+                      saver.save(session, 'model_best.ckpt')  
                 elif step == num_steps-1:
                   if 'x_test' and 'y_test' in kwargs:
                       print('Test accuracy: %.1f%%' % accuracy(
                                test_prediction.eval(),test_labels)) 
             else:
-                saver.restore(session, 'model_test.ckpt')
+                saver.restore(session, 'model_best.ckpt')
                 pred_proba = train_prediction.eval()
                 pred_class = np.argmax(pred_proba,axis=1) 
                 if predict_proba==True:
