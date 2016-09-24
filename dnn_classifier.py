@@ -86,6 +86,12 @@ class dnn():
         else:
             l2_regul = 0.0
         keep_prob = self.params['keep_prob']
+        if 'keep_prob_input' in self.params:
+            keep_prob_input = self.params['keep_prob_input']
+        else:
+            keep_prob_input = self.params['keep_prob']   
+        if 'batch_size' in self.params:
+            batch_size = self.params['batch_size']
         train_dataset, train_labels = reformat(np.array(x), np.array(y),num_labels,example_rows,example_columns)
         if 'x_test' and 'y_test' in kwargs:
             x_test, y_test = kwargs['x_test'],kwargs['y_test']
@@ -103,14 +109,18 @@ class dnn():
                 test_dataset = scaler.transform(test_dataset)        
         graph = tf.Graph()
         with graph.as_default():
-          tf_train_dataset = tf.constant(train_dataset)
-          tf_train_labels = tf.constant(train_labels)
+          if 'batch_size' in self.params:
+              tf_train_dataset = tf.placeholder(tf.float32,
+                                        shape=(batch_size, example_rows * example_columns))
+              tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels))
+          else:
+              tf_train_dataset = tf.constant(train_dataset)
+              tf_train_labels = tf.constant(train_labels)
           if 'x_valid' and 'y_valid' in kwargs:
               tf_valid_dataset = tf.constant(valid_dataset)
               tf_valid_labels = tf.constant(valid_labels)
           if 'x_test' and 'y_test' in kwargs:
-              tf_test_dataset = tf.constant(test_dataset)
-    
+              tf_test_dataset = tf.constant(test_dataset)    
           # Variables.
           beta_regul = tf.placeholder(tf.float32)
           weights = {}
@@ -136,39 +146,45 @@ class dnn():
           layer = {}
           dropout = {}
           layer[0] = tf.nn.relu(tf.matmul(tf_train_dataset,weights[0]) + biases[0])
-          dropout[0] = tf.nn.dropout(layer[0], keep_prob=keep_prob)
+          dropout[0] = tf.nn.dropout(layer[0], keep_prob=keep_prob_input)
           for i in np.arange(1,len(weights)-1):
               layer[i] = tf.nn.relu(tf.matmul(dropout[i-1],weights[i]) + biases[i])
               dropout[i] = tf.nn.dropout(layer[i], keep_prob=keep_prob)
           logits = tf.matmul(dropout[len(dropout)-1],weights[len(weights)-1]) + biases[len(biases)-1]     
-              
-          loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels)) 
+          if num_labels == 2:
+              loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits,tf_train_labels))
+          else:
+              loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits, tf_train_labels)) 
           reg = 0
           for i in range(len(weights)):
             reg += beta_regul * tf.nn.l2_loss(weights[i])
           loss = loss + reg
-          
           # Optimizer.
           # We are going to find the minimum of this loss using gradient descent.
           global_step = tf.Variable(0)
           learning_rate = tf.train.exponential_decay(
-            0.5, global_step, 1000, 0.5, staircase=True)
-        
+            0.5, global_step, 1000, 0.5, staircase=True)        
           optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss,
-            global_step = global_step)
-          
+            global_step = global_step)          
           # Predictions for the training, validation, and test data.
           # These are not part of training, but merely here so that we can report
           # accuracy figures as we train.
-          train_prediction = tf.nn.softmax(logits)
+          if num_labels == 2:
+              train_prediction = tf.nn.sigmoid(logits)
+          else:
+              train_prediction = tf.nn.softmax(logits)
           if 'x_valid' and 'y_valid' in kwargs:
               valid_layer = {}
               valid_layer[0] = tf.nn.relu(tf.matmul(tf_valid_dataset,weights[0])+biases[0])
               for i in np.arange(1,len(weights)-1):
                   valid_layer[i] = tf.nn.relu(tf.matmul(valid_layer[i-1],weights[i]) + biases[i])
               valid_logits = tf.matmul(valid_layer[len(valid_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1]
-              valid_prediction = tf.nn.softmax(valid_logits)
-              valid_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(valid_logits,tf_valid_labels))
+              if num_labels == 2:
+                  valid_prediction = tf.nn.sigmoid(valid_logits)
+                  valid_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(valid_logits,tf_valid_labels))
+              else:
+                  valid_prediction = tf.nn.softmax(valid_logits)
+                  valid_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(valid_logits,tf_valid_labels))
           #lay1_valid = tf.nn.relu(tf.matmul(tf_valid_dataset,weights1)+biases1)
           #lay2_valid = tf.nn.relu(tf.matmul(lay1_valid,weights2)+biases2)
           #valid_prediction = tf.nn.softmax(
@@ -178,10 +194,12 @@ class dnn():
               test_layer[0] = tf.nn.relu(tf.matmul(tf_test_dataset,weights[0])+biases[0])
               for i in np.arange(1,len(weights)-1):
                   test_layer[i] = tf.nn.relu(tf.matmul(test_layer[i-1],weights[i]) + biases[i])
-              test_prediction = tf.nn.softmax(
+              if num_labels == 2:
+                  test_prediction = tf.nn.sigmoid(
                     tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])               
-
-             
+              else:
+                  test_prediction = tf.nn.softmax(
+                        tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])                           
         with tf.Session(graph=graph) as session:
           # This is a one-time operation which ensures the parameters get initialized as
           # we described in the graph: random weights for the matrix, zeros for the
@@ -197,13 +215,20 @@ class dnn():
             # and get the loss value and the training predictions returned as numpy
             # arrays.
             if is_train:
+                if 'batch_size' in self.params:
+                    offset = (step * batch_size) % (train_labels.shape[0] - batch_size)
+                    batch_data = train_dataset[offset:(offset + batch_size), :]
+                    batch_labels = train_labels[offset:(offset + batch_size), :]
+                    feed_dict = {tf_train_dataset : batch_data, tf_train_labels : batch_labels, beta_regul: l2_regul}
+                else:
+                    feed_dict = {beta_regul: l2_regul}
                 if 'x_valid' and 'y_valid' in kwargs:
                     _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, 
                              valid_loss, valid_prediction],
-                        feed_dict = {beta_regul: l2_regul})
+                        feed_dict = feed_dict)
                 else:
                     _, l, predictions = session.run([optimizer, loss, train_prediction],
-                        feed_dict = {beta_regul: l2_regul})
+                        feed_dict = feed_dict)
                 if (step % evaluation_frequency == 0):
                   if 'x_valid' and 'y_valid' in kwargs:
                       tracking.append([step,l,vl]) #track the model step loss
