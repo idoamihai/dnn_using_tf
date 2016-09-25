@@ -71,7 +71,7 @@ class dnn():
         if 'patience' in self.params:
             patience = self.params['patience']
             patience_increase = 5 #wait this much longer when a new best is found
-            improvement_threshold = 0.999 # a relative improvement of this much is considered significant
+            improvement_threshold = 1.0 # a relative improvement of this much is considered significant
         if 'random_seed' in self.params:
             random.seed(self.params['random_seed'])
         if 'evaluation_frequency' in self.params:
@@ -109,7 +109,7 @@ class dnn():
                 test_dataset = scaler.transform(test_dataset)        
         graph = tf.Graph()
         with graph.as_default():
-          if 'batch_size' in self.params:
+          if 'batch_size' in self.params and is_train==True:
               tf_train_dataset = tf.placeholder(tf.float32,
                                         shape=(batch_size, example_rows * example_columns))
               tf_train_labels = tf.placeholder(tf.float32, shape=(batch_size, num_labels))
@@ -126,17 +126,17 @@ class dnn():
           weights = {}
           biases = {}
           weights[0] = tf.Variable(tf.truncated_normal([example_rows * example_columns,
-                                                      hidden[0]],
-                                                      stddev= 0.1))
+                                                      hidden[0]],mean = 0.0,
+                                                      stddev= 1.0))
           biases[0] = tf.Variable(tf.zeros([hidden[0]]))
           for i in np.arange(1,len(hidden)):
               weights[i] = tf.Variable(
-                tf.truncated_normal([hidden[i-1], hidden[i]],
-                                    stddev= 0.1))
+                tf.truncated_normal([hidden[i-1], hidden[i]],mean = 0.0,
+                                    stddev= 1.0))
               biases[i] = tf.Variable(tf.zeros([hidden[i]]))
           weights[len(weights)] = tf.Variable(
-                  tf.truncated_normal([hidden[-1], num_labels],
-                        stddev= 0.1))  
+                  tf.truncated_normal([hidden[-1], num_labels],mean = 0.0,
+                        stddev = 1.0))  
           biases[len(biases)] = tf.Variable(tf.zeros([num_labels]))
           
           # Training computation.
@@ -234,9 +234,13 @@ class dnn():
                       tracking.append([step,l,vl]) #track the model step loss
                   else:
                       tracking.append([step,l])
-                  print('Loss at step %d: %f' % (step, l))                  
-                  print('Training accuracy: %.1f%%' % accuracy(
-                    predictions, train_labels))
+                  print('Loss at step %d: %f' % (step, l)) 
+                  if 'batch_size' in self.params:
+                      print('Training accuracy: %.1f%%' % accuracy(
+                        predictions, batch_labels))
+                  else:
+                      print('Training accuracy: %.1f%%' % accuracy(
+                        predictions, train_labels))
                   if 'x_valid' and 'y_valid' in kwargs:
                       print('Validation Loss at step %d: %f' % (step, vl))
                       print('Validation accuracy: %.1f%%' % accuracy(
@@ -253,7 +257,7 @@ class dnn():
                               best_validation_loss = vl
                       else:
                           patience_steps += 1
-                          if ((patience_steps > patience_increase) and (step >= patience)):
+                          if ((patience_steps >= patience_increase) and (step >= patience)):
                               if 'x_test' and 'y_test' in kwargs:
                                   saver.restore(session, 'model_best.ckpt')
                                   print('Test accuracy: %.1f%%' % accuracy(
