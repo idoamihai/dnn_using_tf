@@ -161,11 +161,15 @@ class dnn():
           loss = loss + reg
           # Optimizer.
           # We are going to find the minimum of this loss using gradient descent.
-          global_step = tf.Variable(0)
-          learning_rate = tf.train.exponential_decay(
-            0.5, global_step, 1000, 0.5, staircase=True)        
-          optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss,
-            global_step = global_step)          
+          if self.params['learning_rate'] == 'exp_decay':
+              global_step = tf.Variable(0)
+              learning_rate = tf.train.exponential_decay(
+                0.5, global_step, 1000, 0.5, staircase=True) 
+              optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss,
+                global_step = global_step)       
+          else:
+              learning_rate = self.params['learning_rate']
+              optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)       
           # Predictions for the training, validation, and test data.
           # These are not part of training, but merely here so that we can report
           # accuracy figures as we train.
