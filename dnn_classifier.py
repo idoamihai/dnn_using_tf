@@ -55,7 +55,7 @@ def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timeste
         grid_search_scores.append(dict_) 
     return grid_search_scores,max_params,max_score     
     
-class dnn():
+class feedforward():
     
     def __init__(self,params):
         self.params = params
@@ -312,7 +312,6 @@ class lstm():
         self.params = params
 
     def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,**kwargs):
-        #refit and predict on test
         graph = tf.Graph()
         with graph.as_default():
             # Parameters
@@ -382,11 +381,16 @@ class lstm():
                 drop = tf.nn.dropout(outputs[-1], keep_prob=keep_prob)
                 pred = tf.matmul(drop, weights['out']) + biases['out'] 
                 return pred           
-            pred = RNN(x, weights, biases)  
-            probabilities = tf.nn.sigmoid(pred)
+            pred = RNN(x, weights, biases) 
+            if n_classes == 2:
+                probabilities = tf.nn.sigmoid(pred) #not exactly probabilities but often close enough
+                cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(pred, y)) +\
+                beta_regul * tf.nn.l2_loss(weights['out'])
+            else:
+                probabilities = tf.nn.softmax(pred)
+                cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y)) +\
+                beta_regul * tf.nn.l2_loss(weights['out'])
             # Define loss and optimizer
-            cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(pred, y)) +\
-            beta_regul * tf.nn.l2_loss(weights['out'])
             optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)            
             # Evaluate model
             correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
