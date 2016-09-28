@@ -254,14 +254,35 @@ class feedforward():
                     _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, 
                              valid_loss, valid_prediction],
                         feed_dict = feed_dict)
+                    tracking.append([step,l,vl]) #track the model step loss
                 else:
                     _, l, predictions = session.run([optimizer, loss, train_prediction],
                         feed_dict = feed_dict)
+                    tracking.append([step,l])
+                if 'x_valid' and 'y_valid' in kwargs:
+                    if 'patience' in self.params:
+                      if vl < best_validation_loss:
+                          saver.save(session, self.path+'model_best.ckpt')
+                          if vl < best_validation_loss*improvement_threshold:
+                              patience_steps = 0
+                          else:
+                              patience_steps += 1 #small improvement
+                          best_validation_loss = vl
+                      else:
+                          patience_steps += 1
+                          if ((patience_steps >= patience_increase) and (step >= patience)):
+                              if 'x_test' and 'y_test' in kwargs:
+                                  saver.restore(session, self.path+'model_best.ckpt')
+                                  print('Test accuracy: %.1f%%' % accuracy(
+                                           test_prediction.eval(),test_labels))
+                              break  
+                    elif vl < best_validation_loss:
+                          best_validation_loss = vl
+                          saver.save(session, self.path+'model_best.ckpt')  
+                #elif l < best_training_loss:
+                #      best_training_loss = l
+                #      saver.save(session, self.path+'model_best.ckpt')  
                 if (step % evaluation_frequency == 0):
-                  if 'x_valid' and 'y_valid' in kwargs:
-                      tracking.append([step,l,vl]) #track the model step loss
-                  else:
-                      tracking.append([step,l])
                   print('Loss at step %d: %f' % (step, l)) 
                   if 'batch_size' in self.params:
                       print('Training accuracy: %.1f%%' % accuracy(
@@ -273,33 +294,11 @@ class feedforward():
                       print('Validation Loss at step %d: %f' % (step, vl))
                       print('Validation accuracy: %.1f%%' % accuracy(
                                  vp, valid_labels))
-                  if 'x_valid' and 'y_valid' in kwargs:
-                      if 'patience' in self.params:
-                          if vl < best_validation_loss:
-                              saver.save(session, self.path+'model_best.ckpt')
-                              if vl < best_validation_loss*improvement_threshold:
-                                  patience_steps = 0
-                              else:
-                                  patience_steps += 1 #small improvement
-                              best_validation_loss = vl
-                          else:
-                              patience_steps += 1
-                              if ((patience_steps >= patience_increase) and (step >= patience)):
-                                  if 'x_test' and 'y_test' in kwargs:
-                                      saver.restore(session, self.path+'model_best.ckpt')
-                                      print('Test accuracy: %.1f%%' % accuracy(
-                                               test_prediction.eval(),test_labels))
-                                  break  
-                  elif vl < best_validation_loss:
-                      best_validation_loss = vl
-                      saver.save(session, self.path+'model_best.ckpt')  
-                  elif l < best_training_loss:
-                      best_training_loss = l
-                      saver.save(session, self.path+'model_best.ckpt')  
                 elif step == num_steps-1:
                   if 'x_test' and 'y_test' in kwargs:
                       print('Test accuracy: %.1f%%' % accuracy(
                                test_prediction.eval(),test_labels)) 
+                saver.save(session, self.path+'model_best.ckpt') #if no early stopping save at the end    
             else:
                 saver.restore(session, self.path+'model_best.ckpt')
                 pred_proba = train_prediction.eval()
@@ -423,51 +422,55 @@ class lstm():
                     batch_x = batch_x.reshape((batch_size, n_timesteps, n_input))
                     # Run optimization op (backprop)
                     sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
+                    # Calculate batch loss
+                    loss = sess.run(cost, feed_dict={x: batch_x, y: batch_y})
+                    if 'x_valid' and 'y_valid' in kwargs:
+                        x_valid = kwargs['x_valid'].reshape((-1,n_timesteps,n_input))
+                        vl = sess.run(cost,feed_dict={x:x_valid,y:kwargs['y_valid']})
+                        tracking.append([step,loss,vl])                  
+                        if 'patience' in self.params:
+                            if vl < best_validation_loss:
+                                saver.save(sess, self.path+'lstm_best.ckpt')
+                                if vl < best_validation_loss*improvement_threshold:
+                                    patience_steps = 0
+                                else:
+                                    patience_steps += 1 #small improvement
+                                best_validation_loss = vl
+                            else:
+                                patience_steps += 1
+                            if ((patience_steps >= patience_increase) and (step >= patience)):
+                                if 'x_test' and 'y_test' in kwargs:
+                                    saver.restore(sess, self.path+'lstm_best.ckpt')
+                                    test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
+                                    print("Testing Accuracy:", \
+                                          sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
+                                print 'saved model step %d' % (step - patience_increase)
+                                break  
+                        elif vl < best_validation_loss:
+                            saver.save(sess, self.path+'lstm_best.ckpt') 
+                    #elif loss < best_training_loss: #if no validation set is given, save the model with the losest loss on the training set
+                        #best_training_loss = loss
+                        #tracking.append([step,loss])                
+                        #saver.save(sess, self.path+'lstm_best.ckpt') 
+                        #print 'step %d saved' %step
                     if step % display_step == 0:
-                        # Calculate batch accuracy
                         acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
-                        # Calculate batch loss
-                        loss = sess.run(cost, feed_dict={x: batch_x, y: batch_y})
                         print("Iter " + str(step) + ", Minibatch Loss= " + \
                               "{:.6f}".format(loss) + ", Training Accuracy= " + \
                               "{:.5f}".format(acc))
                         if 'x_valid' and 'y_valid' in kwargs:
-                            x_valid = kwargs['x_valid'].reshape((-1,n_timesteps,n_input))
-                            vl = sess.run(cost,feed_dict={x:x_valid,y:kwargs['y_valid']})
                             print ("validation loss %.6f" %vl)
                             print ("validation accuracy:", \
                                     sess.run(accuracy, feed_dict={x:x_valid,y:kwargs['y_valid']}))
-                            tracking.append([step,loss,vl])
-                            if 'patience' in self.params:
-                                if vl < best_validation_loss:
-                                    saver.save(sess, self.path+'lstm_best.ckpt')
-                                    if vl < best_validation_loss*improvement_threshold:
-                                        patience_steps = 0
-                                    else:
-                                        patience_steps += 1 #small improvement
-                                    best_validation_loss = vl
-                                else:
-                                    patience_steps += 1
-                                    if ((patience_steps >= patience_increase) and (step >= patience)):
-                                        if 'x_test' and 'y_test' in kwargs:
-                                            saver.restore(sess, self.path+'lstm_best.ckpt')
-                                            test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
-                                            print("Testing Accuracy:", \
-                                                  sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
-                                        break  
-                            elif vl < best_validation_loss:
-                                saver.save(sess, self.path+'lstm_best.ckpt') 
-                        else:
-                            tracking.append([step,loss])
-                            if loss < best_training_loss:
-                                saver.save(sess, self.path+'lstm_best.ckpt')                     
                     elif step == training_iters-1:
                         if 'x_test' and 'y_test' in kwargs:
                             test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
                             print("Testing Accuracy:", \
                               sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
+                saver.save(sess, self.path+'lstm_best.ckpt') #if no early stopping save at the end
+                print 'step %d saved' %step
                 print("Optimization Finished!")            
-                # Calculate accuracy on the validation set
+                # Calculate accuracy on the test set if one is given
                 if (('test_data' in kwargs) and ('test_labels' in kwargs)):
                     test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
                     print("Testing Accuracy:", \
