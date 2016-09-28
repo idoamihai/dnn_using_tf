@@ -57,8 +57,12 @@ def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timeste
     
 class feedforward():
     
-    def __init__(self,params):
+    def __init__(self,params,**kwargs):
         self.params = params
+        if 'path' in kwargs: #path for saving and restoring models
+            self.path = kwargs['path']
+        else:
+            self.path = ''
     #split training into train and validation sets
     def cv_score(self,x_train,y_train,example_rows,num_labels,n_folds,**kwargs):
         #normally you wouldn't use early-stopping here but when you have separate training/validation/test sets
@@ -272,7 +276,7 @@ class feedforward():
                   if 'x_valid' and 'y_valid' in kwargs:
                       if 'patience' in self.params:
                           if vl < best_validation_loss:
-                              saver.save(session, 'model_best.ckpt')
+                              saver.save(session, self.path+'model_best.ckpt')
                               if vl < best_validation_loss*improvement_threshold:
                                   patience_steps = 0
                               else:
@@ -282,22 +286,22 @@ class feedforward():
                               patience_steps += 1
                               if ((patience_steps >= patience_increase) and (step >= patience)):
                                   if 'x_test' and 'y_test' in kwargs:
-                                      saver.restore(session, 'model_best.ckpt')
+                                      saver.restore(session, self.path+'model_best.ckpt')
                                       print('Test accuracy: %.1f%%' % accuracy(
                                                test_prediction.eval(),test_labels))
                                   break  
                   elif vl < best_validation_loss:
                       best_validation_loss = vl
-                      saver.save(session, 'model_best.ckpt')  
+                      saver.save(session, self.path+'model_best.ckpt')  
                   elif l < best_training_loss:
                       best_training_loss = l
-                      saver.save(session, 'model_best.ckpt')  
+                      saver.save(session, self.path+'model_best.ckpt')  
                 elif step == num_steps-1:
                   if 'x_test' and 'y_test' in kwargs:
                       print('Test accuracy: %.1f%%' % accuracy(
                                test_prediction.eval(),test_labels)) 
             else:
-                saver.restore(session, 'model_best.ckpt')
+                saver.restore(session, self.path+'model_best.ckpt')
                 pred_proba = train_prediction.eval()
                 pred_class = np.argmax(pred_proba,axis=1) 
                 if predict_proba==True:
@@ -308,8 +312,12 @@ class feedforward():
             return tracking
   
 class lstm():        
-    def __init__(self,params):
+    def __init__(self,params,**kwargs):
         self.params = params
+        if 'path' in kwargs: #path for saving and restoring models
+            self.path = kwargs['path']
+        else:
+            self.path = ''
 
     def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,**kwargs):
         graph = tf.Graph()
@@ -432,7 +440,7 @@ class lstm():
                             tracking.append([step,loss,vl])
                             if 'patience' in self.params:
                                 if vl < best_validation_loss:
-                                    saver.save(sess, 'lstm_best.ckpt')
+                                    saver.save(sess, self.path+'lstm_best.ckpt')
                                     if vl < best_validation_loss*improvement_threshold:
                                         patience_steps = 0
                                     else:
@@ -442,17 +450,17 @@ class lstm():
                                     patience_steps += 1
                                     if ((patience_steps >= patience_increase) and (step >= patience)):
                                         if 'x_test' and 'y_test' in kwargs:
-                                            saver.restore(sess, 'lstm_best.ckpt')
+                                            saver.restore(sess, self.path+'lstm_best.ckpt')
                                             test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
                                             print("Testing Accuracy:", \
                                                   sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
                                         break  
                             elif vl < best_validation_loss:
-                                saver.save(sess, 'lstm_best.ckpt') 
+                                saver.save(sess, self.path+'lstm_best.ckpt') 
                         else:
                             tracking.append([step,loss])
                             if loss < best_training_loss:
-                                saver.save(sess, 'lstm_best.ckpt')                     
+                                saver.save(sess, self.path+'lstm_best.ckpt')                     
                     elif step == training_iters-1:
                         if 'x_test' and 'y_test' in kwargs:
                             test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
@@ -467,7 +475,7 @@ class lstm():
                     pred_proba = sess.run(probabilities, feed_dict={x: test_data, y: kwargs['test_labels']})
                     pred_class = np.argmax(pred_proba,axis=1)
             else:
-                saver.restore(sess, 'lstm_best.ckpt')
+                saver.restore(sess, self.path+'lstm_best.ckpt')
                 train_data = train_data.reshape((-1,n_timesteps,n_input))
                 pred_proba = sess.run(probabilities, feed_dict={x: train_data, y: train_labels})
                 #since we're only predicting, the inputs are train_data and train_labels
