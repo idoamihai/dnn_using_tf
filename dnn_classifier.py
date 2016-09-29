@@ -108,11 +108,15 @@ class feedforward():
             l2_regul = self.params['l2_regul']
         else:
             l2_regul = 0.0
-        keep_prob = self.params['keep_prob']
-        if 'keep_prob_input' in self.params:
-            keep_prob_input = self.params['keep_prob_input']
+        if is_train:
+            keep_prob = self.params['keep_prob']
+            if 'keep_prob_input' in self.params:
+                keep_prob_input = self.params['keep_prob_input']
+            else:
+                keep_prob_input = self.params['keep_prob']  
         else:
-            keep_prob_input = self.params['keep_prob']   
+            keep_prob = 1.0
+            keep_prob_input = 1.0
         if 'batch_size' in self.params:
             batch_size = self.params['batch_size']
         train_dataset, train_labels = reformat(np.array(x), np.array(y),num_labels,example_rows,example_columns)
@@ -298,7 +302,7 @@ class feedforward():
                   if 'x_test' and 'y_test' in kwargs:
                       print('Test accuracy: %.1f%%' % accuracy(
                                test_prediction.eval(),test_labels)) 
-                saver.save(session, self.path+'model_best.ckpt') #if no early stopping save at the end    
+                  saver.save(session, self.path+'model_best.ckpt') #if no early stopping save at the end    
             else:
                 saver.restore(session, self.path+'model_best.ckpt')
                 pred_proba = train_prediction.eval()
@@ -322,6 +326,14 @@ class lstm():
         graph = tf.Graph()
         with graph.as_default():
             # Parameters
+            if 'scale' in self.params:
+                scaler = preprocessing.StandardScaler()
+                scaler.fit(train_data)        
+                train_dataset = scaler.transform(train_data)
+                if 'x_valid' and 'y_valid' in kwargs:
+                    kwargs['x_valid'] = scaler.transform(kwargs['x_valid'])
+                if 'x_test' and 'y_test' in kwargs:
+                    kwargs['test_data'] = scaler.transform(kwargs['test_data'])              
             if self.params['learning_rate'] == 'exp_decay':
                 global_step = tf.Variable(0)
                 learning_rate = tf.train.exponential_decay(
@@ -386,7 +398,10 @@ class lstm():
                 outputs, states = rnn.rnn(stacked_lstm, x, dtype=tf.float32)            
                 # Linear activation, using rnn inner loop last output
                 drop = tf.nn.dropout(outputs[-1], keep_prob=keep_prob)
-                pred = tf.matmul(drop, weights['out']) + biases['out'] 
+                if is_train:
+                    pred = tf.matmul(drop, weights['out']) + biases['out'] 
+                if is_train==False:
+                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out'] 
                 return pred           
             pred = RNN(x, weights, biases) 
             if n_classes == 2:
@@ -453,6 +468,8 @@ class lstm():
                         #tracking.append([step,loss])                
                         #saver.save(sess, self.path+'lstm_best.ckpt') 
                         #print 'step %d saved' %step
+                    else:
+                        tracking.append([step,loss])
                     if step % display_step == 0:
                         acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
                         print("Iter " + str(step) + ", Minibatch Loss= " + \
@@ -467,8 +484,8 @@ class lstm():
                             test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
                             print("Testing Accuracy:", \
                               sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
-                saver.save(sess, self.path+'lstm_best.ckpt') #if no early stopping save at the end
-                print 'step %d saved' %step
+                        saver.save(sess, self.path+'lstm_best.ckpt') #if no early stopping save at the end
+                        print 'step %d saved' %step
                 print("Optimization Finished!")            
                 # Calculate accuracy on the test set if one is given
                 if (('test_data' in kwargs) and ('test_labels' in kwargs)):
