@@ -46,12 +46,13 @@ def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timeste
     grid_search_scores = []
     for params_ in grid:
         clf = lstm(params_)
-        score = clf.cv_score(x_train,y_train,n_input,n_timesteps,num_labels,n_folds,scoring=scoring,predict_proba=False)
+        score,steps = clf.cv_score(x_train,y_train,n_input,n_timesteps,num_labels,n_folds,scoring=scoring,predict_proba=False)
         if score > max_score:
             max_score = score
             max_params = params_
         dict_ = params_
         dict_['score'] = score
+        dict_['steps'] = steps
         grid_search_scores.append(dict_) 
     return grid_search_scores,max_params,max_score     
     
@@ -391,17 +392,19 @@ class lstm():
                 # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
                 x = tf.split(0, n_timesteps, x)            
                 # Define a lstm cell with tensorflow
-                lstm_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True)            
+                lstm_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True) 
+                if is_train:
+                    lstm_cell = rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=keep_prob)
                 stacked_lstm = rnn_cell.MultiRNNCell([lstm_cell] * n_layers,
                                                      state_is_tuple=True)
                 # Get lstm cell output
                 outputs, states = rnn.rnn(stacked_lstm, x, dtype=tf.float32)            
                 # Linear activation, using rnn inner loop last output
-                drop = tf.nn.dropout(outputs[-1], keep_prob=keep_prob)
                 if is_train:
-                    pred = tf.matmul(drop, weights['out']) + biases['out'] 
-                if is_train==False:
-                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out'] 
+                    pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
+                else:
+                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out']  
+                    #perform weight scaling during testing                  
                 return pred           
             pred = RNN(x, weights, biases) 
             if n_classes == 2:
@@ -520,6 +523,7 @@ class lstm():
         else:
             kf = cross_validation.StratifiedKFold(y=np.argmax(y_train,axis=1),n_folds=n_folds,shuffle=True)  
         kscores = []
+        steps = []
         fold = 0
         for train_idx, valid_idx in kf:
             fold += 1
@@ -527,10 +531,14 @@ class lstm():
             y_train_ = y_train[train_idx]
             x_valid = x_train[valid_idx]
             y_valid = y_train[valid_idx]
-            lstm.fit_predict(self,x_train_,y_train_,n_input,n_timesteps,n_classes,is_train=True,predict_proba=False)
+            tracking = lstm.fit_predict(self,x_train_,y_train_,n_input,n_timesteps,
+                            n_classes,is_train=True,predict_proba=False,x_valid=x_valid,y_valid=y_valid)
             valid_prediction = lstm.fit_predict(self,x_valid,y_valid,n_input,n_timesteps,n_classes,is_train=False,predict_proba=False)
             kscores.append(scoring(np.argmax(y_valid,axis=1),valid_prediction))
-        return np.mean(kscores) 
+            tracking = pd.DataFrame(tracking,columns=['step','tloss','vloss'])
+            bstep = tracking['step'][tracking['vloss']==tracking['vloss'].min()]
+            steps.append(bstep.values[0])
+        return np.mean(kscores),np.mean(steps) 
 
         
         
