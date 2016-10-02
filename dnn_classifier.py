@@ -109,15 +109,14 @@ class feedforward():
             l2_regul = self.params['l2_regul']
         else:
             l2_regul = 0.0
-        if is_train:
+        if 'keep_prob' in self.params:
             keep_prob = self.params['keep_prob']
-            if 'keep_prob_input' in self.params:
-                keep_prob_input = self.params['keep_prob_input']
-            else:
-                keep_prob_input = self.params['keep_prob']  
         else:
             keep_prob = 1.0
-            keep_prob_input = 1.0
+        if 'keep_prob_input' in self.params:
+            keep_prob_input = self.params['keep_prob_input']
+        else:
+            keep_prob_input = 1.0 
         if 'batch_size' in self.params:
             batch_size = self.params['batch_size']
         train_dataset, train_labels = reformat(np.array(x), np.array(y),num_labels,example_rows,example_columns)
@@ -176,9 +175,15 @@ class feedforward():
           layer[0] = tf.nn.relu(tf.matmul(tf_train_dataset,weights[0]) + biases[0])
           dropout[0] = tf.nn.dropout(layer[0], keep_prob=keep_prob_input)
           for i in np.arange(1,len(weights)-1):
-              layer[i] = tf.nn.relu(tf.matmul(dropout[i-1],weights[i]) + biases[i])
-              dropout[i] = tf.nn.dropout(layer[i], keep_prob=keep_prob)
-          logits = tf.matmul(dropout[len(dropout)-1],weights[len(weights)-1]) + biases[len(biases)-1]     
+              if is_train:
+                  layer[i] = tf.nn.relu(tf.matmul(dropout[i-1],weights[i]) + biases[i])
+                  dropout[i] = tf.nn.dropout(layer[i], keep_prob=keep_prob)
+              else:
+                  layer[i] = tf.nn.relu(tf.matmul(layer[i-1],weights[i]*keep_prob) + biases[i]) #weight scaling during test
+          if is_train:
+              logits = tf.matmul(dropout[len(dropout)-1],weights[len(weights)-1]) + biases[len(biases)-1]  
+          else:
+              logits = tf.matmul(layer[len(layer)-1],weights[len(weights)-1]) + biases[len(biases)-1]
           if num_labels == 2:
               loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits,tf_train_labels))
           else:
@@ -190,7 +195,7 @@ class feedforward():
           # Optimizer.
           # We are going to find the minimum of this loss using gradient descent.
           if self.params['learning_rate'] == 'exp_decay':
-              global_step = tf.Variable(0)
+              global_step = tf.Variable(0, trainable = False)
               learning_rate = tf.train.exponential_decay(
                 0.5, global_step, 1000, 0.5, staircase=True) 
               optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss,
@@ -241,6 +246,7 @@ class feedforward():
           print('Initialized')
           best_validation_loss = np.inf
           best_training_loss = np.inf
+          best_step = 0
           patience_steps = 0
           tracking = []
           for step in range(num_steps):
@@ -255,47 +261,49 @@ class feedforward():
                     feed_dict = {tf_train_dataset : batch_data, tf_train_labels : batch_labels, beta_regul: l2_regul}
                 else:
                     feed_dict = {beta_regul: l2_regul}
-                if 'x_valid' and 'y_valid' in kwargs:
-                    _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, 
-                             valid_loss, valid_prediction],
-                        feed_dict = feed_dict)
-                    tracking.append([step,l,vl]) #track the model step loss
-                else:
-                    _, l, predictions = session.run([optimizer, loss, train_prediction],
-                        feed_dict = feed_dict)
-                    tracking.append([step,l])
-                if 'x_valid' and 'y_valid' in kwargs:
-                    if 'patience' in self.params:
-                      if vl < best_validation_loss:
-                          saver.save(session, self.path+'model_best.ckpt')
-                          if vl < best_validation_loss*improvement_threshold:
-                              patience_steps = 0
-                          else:
-                              patience_steps += 1 #small improvement
-                          best_validation_loss = vl
-                      else:
-                          patience_steps += 1
-                          if ((patience_steps >= patience_increase) and (step >= patience)):
-                              if 'x_test' and 'y_test' in kwargs:
-                                  saver.restore(session, self.path+'model_best.ckpt')
-                                  print('Test accuracy: %.1f%%' % accuracy(
-                                           test_prediction.eval(),test_labels))
-                              break  
-                    elif vl < best_validation_loss:
-                          best_validation_loss = vl
-                          saver.save(session, self.path+'model_best.ckpt')  
-                #elif l < best_training_loss:
-                #      best_training_loss = l
-                #      saver.save(session, self.path+'model_best.ckpt')  
                 if (step % evaluation_frequency == 0):
-                  print('Loss at step %d: %f' % (step, l)) 
-                  if 'batch_size' in self.params:
+                    if 'x_valid' and 'y_valid' in kwargs:
+                        _, l, predictions, vl, vp = session.run([optimizer, loss, train_prediction, 
+                                 valid_loss, valid_prediction],
+                            feed_dict = feed_dict)
+                        tracking.append([step,l,vl]) #track the model step loss
+                    else:
+                        _, l, predictions = session.run([optimizer, loss, train_prediction],
+                            feed_dict = feed_dict)
+                        tracking.append([step,l])
+                    if 'x_valid' and 'y_valid' in kwargs:
+                        if 'patience' in self.params:
+                          if vl < best_validation_loss:
+                              saver.save(session, self.path+'model_best.ckpt')
+                              if vl < best_validation_loss*improvement_threshold:
+                                  patience_steps = 0
+                              else:
+                                  patience_steps += 1 #small improvement
+                              best_validation_loss = vl
+                              best_step = step
+                          else:
+                              patience_steps += 1
+                              if ((patience_steps >= patience_increase) and (step >= patience)):
+                                  if 'x_test' and 'y_test' in kwargs:
+                                      saver.restore(session, self.path+'model_best.ckpt')
+                                      print('Test accuracy: %.1f%%' % accuracy(
+                                               test_prediction.eval(),test_labels))
+                                  break  
+                        elif vl < best_validation_loss:
+                              best_validation_loss = vl
+                              best_step = step
+                              saver.save(session, self.path+'model_best.ckpt')  
+                    #elif l < best_training_loss:
+                    #      best_training_loss = l
+                    #      saver.save(session, self.path+'model_best.ckpt')                                                                 
+                    print('Loss at step %d: %f' % (step, l)) 
+                    if 'batch_size' in self.params:
                       print('Training accuracy: %.1f%%' % accuracy(
                         predictions, batch_labels))
-                  else:
+                    else:
                       print('Training accuracy: %.1f%%' % accuracy(
                         predictions, train_labels))
-                  if 'x_valid' and 'y_valid' in kwargs:
+                    if 'x_valid' and 'y_valid' in kwargs:
                       print('Validation Loss at step %d: %f' % (step, vl))
                       print('Validation accuracy: %.1f%%' % accuracy(
                                  vp, valid_labels))
@@ -323,22 +331,22 @@ class lstm():
         else:
             self.path = ''
 
-    def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,**kwargs):
+    def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,clipping=False,**kwargs):
         graph = tf.Graph()
         with graph.as_default():
             # Parameters
             if 'scale' in self.params:
                 scaler = preprocessing.StandardScaler()
                 scaler.fit(train_data)        
-                train_dataset = scaler.transform(train_data)
+                train_data = scaler.transform(train_data)
                 if 'x_valid' and 'y_valid' in kwargs:
                     kwargs['x_valid'] = scaler.transform(kwargs['x_valid'])
                 if 'x_test' and 'y_test' in kwargs:
                     kwargs['test_data'] = scaler.transform(kwargs['test_data'])              
             if self.params['learning_rate'] == 'exp_decay':
-                global_step = tf.Variable(0)
+                global_step = tf.Variable(0, trainable=False)
                 learning_rate = tf.train.exponential_decay(
-               0.5, global_step, 1000, 0.5, staircase=True) 
+               0.001, global_step, 10000, 0.96, staircase=True) 
             else:                
                 learning_rate = self.params['learning_rate']
             training_iters = self.params['training_iters']
@@ -376,11 +384,53 @@ class lstm():
             y = tf.placeholder("float", [None, n_classes])            
             # Define weights
             weights = {
-                'out': tf.Variable(tf.random_normal([n_hidden, n_classes]))
+                'out': tf.Variable(tf.random_normal([2*n_hidden, n_classes]))
             }
             biases = {
                 'out': tf.Variable(tf.random_normal([n_classes]))
-            }                       
+            }   
+
+            def BiRNN(x, weights, biases):
+            
+                # Prepare data shape to match `bidirectional_rnn` function requirements
+                # Current data input shape: (batch_size, n_steps, n_input)
+                # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)
+            
+                # Permuting batch_size and n_steps
+                x = tf.transpose(x, [1, 0, 2])
+                # Reshape to (n_steps*batch_size, n_input)
+                x = tf.reshape(x, [-1, n_input])
+                # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
+                x = tf.split(0, n_timesteps, x)
+            
+                # Define lstm cells with tensorflow
+                # Forward direction cell
+                lstm_fw_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0,state_is_tuple=True)
+                # Backward direction cell
+                lstm_bw_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0,state_is_tuple=True)
+                if is_train:
+                    lstm_fw_cell = rnn_cell.DropoutWrapper(lstm_fw_cell, 
+                                       output_keep_prob=keep_prob)  
+                    lstm_bw_cell = rnn_cell.DropoutWrapper(lstm_bw_cell, 
+                                       output_keep_prob=keep_prob) 
+                lstm_fw_cell = rnn_cell.MultiRNNCell([lstm_fw_cell]*n_layers,state_is_tuple=True)
+                lstm_bw_cell = rnn_cell.MultiRNNCell([lstm_bw_cell]*n_layers,state_is_tuple=True)
+            
+                # Get lstm cell output
+                outputs, _, _ = rnn.bidirectional_rnn(lstm_fw_cell, lstm_bw_cell, x,
+                                                          dtype=tf.float32)
+                if is_train:
+                    pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
+                else:
+                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out']  
+                    #perform weight scaling during testing                 
+            
+                # Linear activation, using rnn inner loop last output
+                return pred, weights['out']
+            
+            pred, output_weights = BiRNN(x, weights, biases)
+
+            '''        
             def RNN(x, weights, biases):            
                 # Prepare data shape to match `rnn` function requirements
                 # Current data input shape: (batch_size, n_steps, n_input)
@@ -394,7 +444,8 @@ class lstm():
                 # Define a lstm cell with tensorflow
                 lstm_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True) 
                 if is_train:
-                    lstm_cell = rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=keep_prob)
+                    lstm_cell = rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=keep_prob)               
+                                       
                 stacked_lstm = rnn_cell.MultiRNNCell([lstm_cell] * n_layers,
                                                      state_is_tuple=True)
                 # Get lstm cell output
@@ -407,6 +458,7 @@ class lstm():
                     #perform weight scaling during testing                  
                 return pred           
             pred = RNN(x, weights, biases) 
+            '''
             if n_classes == 2:
                 probabilities = tf.nn.sigmoid(pred) #not exactly probabilities but often close enough
                 cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(pred, y)) +\
@@ -416,7 +468,13 @@ class lstm():
                 cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(pred, y)) +\
                 beta_regul * tf.nn.l2_loss(weights['out'])
             # Define loss and optimizer
-            optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(cost)            
+            opt_function = tf.train.AdamOptimizer(learning_rate=learning_rate)
+            gradients = opt_function.compute_gradients(cost)
+            capped_gradients = [(tf.clip_by_value(grad, clip_value_min = -5.0,clip_value_max=5.0), var) for grad, var in gradients]
+            if clipping:
+                optimizer = opt_function.apply_gradients(capped_gradients)
+            else:
+                optimizer = opt_function.apply_gradients(gradients)
             # Evaluate model
             correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
             accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))            
@@ -431,6 +489,7 @@ class lstm():
             if is_train:
                 best_validation_loss = np.inf
                 best_training_loss = np.inf
+                best_step = 0
                 patience_steps = 0
                 tracking = []
                 for step in range(training_iters):
@@ -442,38 +501,42 @@ class lstm():
                     sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
                     # Calculate batch loss
                     loss = sess.run(cost, feed_dict={x: batch_x, y: batch_y})
-                    if 'x_valid' and 'y_valid' in kwargs:
-                        x_valid = kwargs['x_valid'].reshape((-1,n_timesteps,n_input))
-                        vl = sess.run(cost,feed_dict={x:x_valid,y:kwargs['y_valid']})
-                        tracking.append([step,loss,vl])                  
-                        if 'patience' in self.params:
-                            if vl < best_validation_loss:
-                                saver.save(sess, self.path+'lstm_best.ckpt')
-                                if vl < best_validation_loss*improvement_threshold:
-                                    patience_steps = 0
+                    ow = sess.run(output_weights, feed_dict={x: batch_x, y: batch_y})
+                    if step % display_step == 0:                        
+                        if 'x_valid' and 'y_valid' in kwargs:
+                            x_valid = kwargs['x_valid'].reshape((-1,n_timesteps,n_input))
+                            vl = sess.run(cost,feed_dict={x:x_valid,y:kwargs['y_valid']})
+                            tracking.append([step,loss,vl,ow])                  
+                            if 'patience' in self.params:
+                                if vl < best_validation_loss:
+                                    saver.save(sess, self.path+'lstm_best.ckpt')
+                                    if vl < best_validation_loss*improvement_threshold:
+                                        patience_steps = 0
+                                    else:
+                                        patience_steps += 1 #small improvement
+                                    best_validation_loss = vl
+                                    best_step = step
                                 else:
-                                    patience_steps += 1 #small improvement
+                                    patience_steps += 1
+                                if ((patience_steps >= patience_increase) and (step >= patience)):
+                                    if 'x_test' and 'y_test' in kwargs:
+                                        saver.restore(sess, self.path+'lstm_best.ckpt')
+                                        test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
+                                        print("Testing Accuracy:", \
+                                              sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
+                                    print 'saved model step %d' % (best_step)
+                                    break  
+                            elif vl < best_validation_loss:
+                                saver.save(sess, self.path+'lstm_best.ckpt') 
                                 best_validation_loss = vl
-                            else:
-                                patience_steps += 1
-                            if ((patience_steps >= patience_increase) and (step >= patience)):
-                                if 'x_test' and 'y_test' in kwargs:
-                                    saver.restore(sess, self.path+'lstm_best.ckpt')
-                                    test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
-                                    print("Testing Accuracy:", \
-                                          sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
-                                print 'saved model step %d' % (step - patience_increase)
-                                break  
-                        elif vl < best_validation_loss:
-                            saver.save(sess, self.path+'lstm_best.ckpt') 
-                    #elif loss < best_training_loss: #if no validation set is given, save the model with the losest loss on the training set
-                        #best_training_loss = loss
-                        #tracking.append([step,loss])                
-                        #saver.save(sess, self.path+'lstm_best.ckpt') 
-                        #print 'step %d saved' %step
-                    else:
-                        tracking.append([step,loss])
-                    if step % display_step == 0:
+                                best_step = step
+                        #elif loss < best_training_loss: #if no validation set is given, save the model with the losest loss on the training set
+                            #best_training_loss = loss
+                            #tracking.append([step,loss])                
+                            #saver.save(sess, self.path+'lstm_best.ckpt') 
+                            #print 'step %d saved' %step
+                        else:
+                            tracking.append([step,loss,ow])                                               
                         acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y})
                         print("Iter " + str(step) + ", Minibatch Loss= " + \
                               "{:.6f}".format(loss) + ", Training Accuracy= " + \
