@@ -28,7 +28,7 @@ def grid_search_dnn(param_grid,x_train,y_train,example_rows=1,num_labels=2,n_fol
     grid = grid_search.ParameterGrid(param_grid)
     grid_search_scores = []
     for params_ in grid:
-        clf = dnn(params_)
+        clf = feedforward(params_)
         score = clf.cv_score(x_train,y_train,example_rows,num_labels,n_folds,scoring=scoring,predict_proba=False)
         if score > max_score:
             max_score = score
@@ -55,7 +55,8 @@ def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timeste
         dict_['steps'] = steps
         grid_search_scores.append(dict_) 
     return grid_search_scores,max_params,max_score     
-    
+
+  
 class feedforward():
     
     def __init__(self,params,**kwargs):
@@ -85,8 +86,8 @@ class feedforward():
             y_train_ = y_train.iloc[train_idx]
             x_valid = x_train.iloc[valid_idx]
             y_valid = y_train.iloc[valid_idx]
-            dnn.fit_predict(self,x_train_,y_train_,example_rows,num_labels,is_train=True)
-            valid_prediction = dnn.fit_predict(self,x_valid,y_valid,example_rows,num_labels,is_train=False,predict_proba=False)
+            feedforward.fit_predict(self,x_train_,y_train_,example_rows,num_labels,is_train=True)
+            valid_prediction = feedforward.fit_predict(self,x_valid,y_valid,example_rows,num_labels,is_train=False,predict_proba=False)
             kscores.append(scoring(y_valid,valid_prediction))
         return np.mean(kscores)       
        
@@ -212,10 +213,10 @@ class feedforward():
               train_prediction = tf.nn.softmax(logits)
           if 'x_valid' and 'y_valid' in kwargs:
               valid_layer = {}
-              valid_layer[0] = tf.nn.relu(tf.matmul(tf_valid_dataset,weights[0])+biases[0])
+              valid_layer[0] = tf.nn.relu(tf.matmul(tf_valid_dataset,weights[0]*keep_prob_input)+biases[0])
               for i in np.arange(1,len(weights)-1):
-                  valid_layer[i] = tf.nn.relu(tf.matmul(valid_layer[i-1],weights[i]) + biases[i])
-              valid_logits = tf.matmul(valid_layer[len(valid_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1]
+                  valid_layer[i] = tf.nn.relu(tf.matmul(valid_layer[i-1],weights[i]*keep_prob) + biases[i])
+              valid_logits = tf.matmul(valid_layer[len(valid_layer)-1],weights[len(weights)-1]*keep_prob) + biases[len(biases)-1]
               if num_labels == 2:
                   valid_prediction = tf.nn.sigmoid(valid_logits)
                   valid_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(valid_logits,tf_valid_labels))
@@ -228,12 +229,12 @@ class feedforward():
           #  tf.matmul(lay2_valid, weights3) + biases3)
           if 'x_test' and 'y_test' in kwargs:
               test_layer = {}
-              test_layer[0] = tf.nn.relu(tf.matmul(tf_test_dataset,weights[0])+biases[0])
+              test_layer[0] = tf.nn.relu(tf.matmul(tf_test_dataset,weights[0]*keep_prob_input)+biases[0])
               for i in np.arange(1,len(weights)-1):
-                  test_layer[i] = tf.nn.relu(tf.matmul(test_layer[i-1],weights[i]) + biases[i])
+                  test_layer[i] = tf.nn.relu(tf.matmul(test_layer[i-1],weights[i]*keep_prob) + biases[i])
               if num_labels == 2:
                   test_prediction = tf.nn.sigmoid(
-                    tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])               
+                    tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]*keep_prob) + biases[len(biases)-1])               
               else:
                   test_prediction = tf.nn.softmax(
                         tf.matmul(test_layer[len(test_layer)-1],weights[len(weights)-1]) + biases[len(biases)-1])                           
@@ -484,7 +485,6 @@ class lstm():
         with tf.Session(graph=graph) as sess:
             sess.run(init)
             saver = tf.train.Saver()
-            step = 1
             # Keep training until reach max iterations
             if is_train:
                 best_validation_loss = np.inf
@@ -492,10 +492,19 @@ class lstm():
                 best_step = 0
                 patience_steps = 0
                 tracking = []
+                idx = range(len(train_data))
+                np.random.shuffle(idx)
+                train_data = train_data[idx,:]
+                train_labels = train_labels[idx,:]
                 for step in range(training_iters):
                     offset = (step * batch_size) % (train_labels.shape[0] - batch_size)
                     batch_x = train_data[offset:(offset + batch_size), :]
                     batch_y = train_labels[offset:(offset + batch_size), :]
+                    #shuffle
+                    idx = range(len(batch_x))
+                    np.random.shuffle(idx)
+                    batch_x = batch_x[idx,:]
+                    batch_y = batch_y[idx,:]
                     batch_x = batch_x.reshape((batch_size, n_timesteps, n_input))
                     # Run optimization op (backprop)
                     sess.run(optimizer, feed_dict={x: batch_x, y: batch_y})
