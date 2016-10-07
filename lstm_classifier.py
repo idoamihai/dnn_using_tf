@@ -16,7 +16,7 @@ def accuracy(predictions, labels):
   return (100.0 * np.sum(np.argmax(predictions, 1) == np.argmax(labels, 1))
           / predictions.shape[0])
 
-  def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timesteps=31,n_folds=5,scoring=metrics.accuracy_score):
+def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timesteps=31,n_folds=5,scoring=metrics.accuracy_score):
     max_score = 0
     max_params = {}
     grid = grid_search.ParameterGrid(param_grid)
@@ -85,10 +85,6 @@ class lstm():
                     keep_prob = self.params['keep_prob']
                 else:
                     keep_prob = 1.0
-            if 'l2_regul' in self.params:
-                beta_regul = self.params['l2_regul']
-            else:
-                beta_regul = 0
             n_classes = n_classes             
             # tf Graph input
             x = tf.placeholder("float", [None, n_timesteps, n_input])
@@ -101,6 +97,8 @@ class lstm():
                 'out': tf.Variable(tf.random_normal([n_classes]))
             }   
 
+            beta_regul = tf.placeholder(tf.float32)
+            
             def BiRNN(x, weights, biases):
             
                 # Prepare data shape to match `bidirectional_rnn` function requirements
@@ -190,7 +188,10 @@ class lstm():
                 if clipping:
                     optimizer = opt_function.apply_gradients(capped_gradients)
                 else:
-                    optimizer = opt_function.apply_gradients(gradients)
+                    optimizer = opt_function.apply_gradients(gradients)                    
+            # Summarize all gradients
+            for grad, var in gradients:
+                tf.histogram_summary(var.name + '/gradient', grad)
             # Evaluate model
             correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
             with tf.name_scope('accuracy'):
@@ -208,7 +209,7 @@ class lstm():
             sess.run(init)
             saver = tf.train.Saver()
             # op to write logs to Tensorboard
-            summary_writer = tf.train.SummaryWriter(logdir=self.path, graph=tf.get_default_graph())
+            summary_writer = tf.train.SummaryWriter(logdir=self.path+'/logdir', graph=tf.get_default_graph())
             # Keep training until reach max iterations
             if is_train:
                 best_validation_loss = np.inf
@@ -237,8 +238,12 @@ class lstm():
                         batch_y = batch_y[idx,:]
                         batch_x = batch_x.reshape((batch_x.shape[0], n_timesteps, n_input))
                         # Run optimization op (backprop)
+                        if 'l2_regul' in self.params:
+                            regul = self.params['l2_regul']
+                        else:
+                            regul = 0.0
                         _, loss, ow, summary = sess.run([optimizer, cost,
-                                output_weights, merged_summary_op],feed_dict={x: batch_x, y: batch_y})
+                                output_weights, merged_summary_op],feed_dict={x: batch_x, y: batch_y, beta_regul: regul})
                         # Write logs at every iteration
                         summary_writer.add_summary(summary, step * total_batches + batch)
                         # Compute average loss
@@ -246,7 +251,8 @@ class lstm():
                     if step % display_step == 0:  
                         if 'x_valid' and 'y_valid' in kwargs:
                             x_valid = kwargs['x_valid'].reshape((-1,n_timesteps,n_input))
-                            vl = sess.run(cost,feed_dict={x:x_valid,y:kwargs['y_valid']})
+                            vl, summary_ = sess.run([cost,merged_summary_op],feed_dict={x:x_valid,y:kwargs['y_valid'], beta_regul: 0})
+                            summary_writer.add_summary(summary_, step)
                             tracking.append([step,loss,vl,ow])                  
                             if 'patience' in self.params:
                                 if vl < best_validation_loss:
@@ -290,7 +296,7 @@ class lstm():
                         if 'x_test' and 'y_test' in kwargs:
                             test_data = kwargs['test_data'].reshape((-1,n_timesteps,n_input))
                             print("Testing Accuracy:", \
-                              sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels']}))
+                              sess.run(accuracy, feed_dict={x: test_data, y: kwargs['test_labels'], beta_regul: 0.0}))
                         saver.save(sess, self.path+'lstm_best.ckpt') #if no early stopping save at the end
                         print 'step %d saved' %step
                 print("Optimization Finished!")            
