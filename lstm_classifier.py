@@ -57,7 +57,7 @@ class lstm():
             if self.params['learning_rate'] == 'exp_decay':
                 global_step = tf.Variable(0, trainable=False)
                 learning_rate = tf.train.exponential_decay(
-               0.001, global_step, 10000, 0.96, staircase=True) 
+               0.001, global_step, 100, 0.96, staircase=True) 
             else:                
                 learning_rate = self.params['learning_rate']
             training_iters = self.params['training_iters']
@@ -184,7 +184,7 @@ class lstm():
             with tf.name_scope('optimizer'):
                 opt_function = tf.train.AdamOptimizer(learning_rate=learning_rate)
                 gradients = opt_function.compute_gradients(cost)
-                capped_gradients = [(tf.clip_by_value(grad, clip_value_min = -5.0,clip_value_max=5.0), var) for grad, var in gradients]
+                capped_gradients = [(tf.clip_by_norm(grad, clip_norm = 5.0), var) for grad, var in gradients]
                 if clipping:
                     optimizer = opt_function.apply_gradients(capped_gradients)
                 else:
@@ -231,11 +231,6 @@ class lstm():
                         #batch_y = train_labels[offset:(offset + batch_size), :]
                         batch_x = batched_data[batch][:,:-n_classes]
                         batch_y = batched_data[batch][:,-n_classes:]
-                        #shuffle batches
-                        idx = range(len(batch_x))
-                        np.random.shuffle(idx)
-                        batch_x = batch_x[idx,:]
-                        batch_y = batch_y[idx,:]
                         batch_x = batch_x.reshape((batch_x.shape[0], n_timesteps, n_input))
                         # Run optimization op (backprop)
                         if 'l2_regul' in self.params:
