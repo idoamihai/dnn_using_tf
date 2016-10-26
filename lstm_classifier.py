@@ -91,8 +91,12 @@ class lstm():
             x = tf.placeholder("float", [None, n_timesteps, n_input])
             y = tf.placeholder("float", [None, n_classes])            
             # Define weights
+            if bidirectional:
+                mult = 2
+            else:
+                mult = 1
             weights = {
-                'out': tf.Variable(tf.random_normal([2*n_hidden, n_classes]))
+                'out': tf.Variable(tf.random_normal([mult*n_hidden, n_classes]))
             }
             biases = {
                 'out': tf.Variable(tf.random_normal([n_classes]))
