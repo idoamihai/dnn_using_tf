@@ -7,7 +7,7 @@ Created on Wed Sep 14 16:32:35 2016
 
 import tensorflow as tf
 import numpy as np, pandas as pd
-from sklearn import cross_validation, preprocessing, metrics, grid_search
+from sklearn import model_selection, preprocessing, metrics
 import random
 from tensorflow.python.ops import rnn, rnn_cell
 
@@ -19,7 +19,7 @@ def accuracy(predictions, labels):
 def grid_search_lstm(param_grid,x_train,y_train,num_labels=2,n_input=4,n_timesteps=31,n_folds=5,scoring=metrics.accuracy_score):
     max_score = 0
     max_params = {}
-    grid = grid_search.ParameterGrid(param_grid)
+    grid = model_selection.ParameterGrid(param_grid)
     grid_search_scores = []
     for params_ in grid:
         clf = lstm(params_)
@@ -42,7 +42,8 @@ class lstm():
         else:
             self.path = ''
 
-    def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,clipping=False,**kwargs):
+    def fit_predict(self,train_data,train_labels,n_input,n_timesteps,n_classes,is_train,predict_proba=False,
+                    clipping=False,bidirectional=True,**kwargs):
         graph = tf.Graph()
         with graph.as_default():
             # Parameters
@@ -98,6 +99,34 @@ class lstm():
             }   
 
             beta_regul = tf.placeholder(tf.float32)
+                                        
+            def RNN(x, weights, biases):            
+                # Prepare data shape to match `rnn` function requirements
+                # Current data input shape: (batch_size, n_steps, n_input)
+                # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)            
+                # Permuting batch_size and n_steps
+                x = tf.transpose(x, [1, 0, 2])
+                # Reshaping to (n_steps*batch_size, n_input)
+                x = tf.reshape(x, [-1, n_input])
+                # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
+                x = tf.split(0, n_timesteps, x)            
+                # Define a lstm cell with tensorflow
+                lstm_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True) 
+                if is_train:
+                    lstm_cell = rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=keep_prob)               
+                                       
+                stacked_lstm = rnn_cell.MultiRNNCell([lstm_cell] * n_layers,
+                                                     state_is_tuple=True)
+                # Get lstm cell output
+                outputs, states = rnn.rnn(stacked_lstm, x, dtype=tf.float32)            
+                # Linear activation, using rnn inner loop last output
+                if is_train:
+                    pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
+                else:
+                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out']  
+                    #perform weight scaling during testing                  
+                return pred, weights['out']           
+
             
             def BiRNN(x, weights, biases):
             
@@ -137,37 +166,11 @@ class lstm():
                 # Linear activation, using rnn inner loop last output
                 return pred, weights['out']
             
-            pred, output_weights = BiRNN(x, weights, biases)
-
-            '''        
-            def RNN(x, weights, biases):            
-                # Prepare data shape to match `rnn` function requirements
-                # Current data input shape: (batch_size, n_steps, n_input)
-                # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)            
-                # Permuting batch_size and n_steps
-                x = tf.transpose(x, [1, 0, 2])
-                # Reshaping to (n_steps*batch_size, n_input)
-                x = tf.reshape(x, [-1, n_input])
-                # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
-                x = tf.split(0, n_timesteps, x)            
-                # Define a lstm cell with tensorflow
-                lstm_cell = rnn_cell.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True) 
-                if is_train:
-                    lstm_cell = rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=keep_prob)               
-                                       
-                stacked_lstm = rnn_cell.MultiRNNCell([lstm_cell] * n_layers,
-                                                     state_is_tuple=True)
-                # Get lstm cell output
-                outputs, states = rnn.rnn(stacked_lstm, x, dtype=tf.float32)            
-                # Linear activation, using rnn inner loop last output
-                if is_train:
-                    pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
-                else:
-                    pred = tf.matmul(outputs[-1], weights['out']*keep_prob) + biases['out']  
-                    #perform weight scaling during testing                  
-                return pred           
-            pred = RNN(x, weights, biases) 
-            '''
+            if bidirectional:
+                pred, output_weights = BiRNN(x, weights, biases)
+            else:
+                pred, output_weights = RNN(x, weights, biases) 
+            
             if n_classes == 2:
                 with tf.name_scope('model'):
                     probabilities = tf.nn.sigmoid(pred) #not exactly probabilities but often close enough
@@ -323,15 +326,12 @@ class lstm():
         else:
             scoring = metrics.accuracy_score
         if 'random_seed' in self.params:
-            kf = cross_validation.StratifiedKFold(y=np.argmax(y_train,axis=1),
-              n_folds=n_folds,shuffle=True,random_state = self.params['random_seed'])
+            kf = model_selection.StratifiedKFold(n_splits=n_folds,shuffle=True,random_state = self.params['random_seed'])
         else:
-            kf = cross_validation.StratifiedKFold(y=np.argmax(y_train,axis=1),n_folds=n_folds,shuffle=True)  
+            kf = model_selection.StratifiedKFold(n_splits=n_folds,shuffle=True)  
         kscores = []
         steps = []
-        fold = 0
-        for train_idx, valid_idx in kf:
-            fold += 1
+        for train_idx, valid_idx in kf.split(x_train,y_train[:,1]):
             x_train_ = x_train[train_idx]
             y_train_ = y_train[train_idx]
             x_valid = x_train[valid_idx]
@@ -340,7 +340,7 @@ class lstm():
                             n_classes,is_train=True,predict_proba=False,x_valid=x_valid,y_valid=y_valid)
             valid_prediction = lstm.fit_predict(self,x_valid,y_valid,n_input,n_timesteps,n_classes,is_train=False,predict_proba=False)
             kscores.append(scoring(np.argmax(y_valid,axis=1),valid_prediction))
-            tracking = pd.DataFrame(tracking,columns=['step','tloss','vloss'])
+            tracking = pd.DataFrame(tracking,columns=['step','tloss','vloss','output-weights'])
             bstep = tracking['step'][tracking['vloss']==tracking['vloss'].min()]
             steps.append(bstep.values[0])
         return np.mean(kscores),np.mean(steps) 
