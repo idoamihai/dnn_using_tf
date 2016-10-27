@@ -347,7 +347,7 @@ class lstm():
             tracking = pd.DataFrame(tracking,columns=['step','tloss','vloss','output-weights'])
             bstep = tracking['step'][tracking['vloss']==tracking['vloss'].min()]
             steps.append(bstep.values[0])
-        return np.mean(kscores),np.mean(steps) 
+        return kscores,steps
 
         
         
