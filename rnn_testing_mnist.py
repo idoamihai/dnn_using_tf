@@ -45,7 +45,7 @@ l2_reg = 0.0
 
 is_train=True
 run_test=True
-
+bidirectional=True
 
 
 def batch_data(x,y,batch_size):
@@ -59,6 +59,54 @@ def batch_data(x,y,batch_size):
     batched_data = iter(batched_data) 
     return batched_data
 
+    
+def RNN(x, weights, biases):            
+    # Prepare data shape to match `rnn` function requirements
+    # Current data input shape: (batch_size, n_steps, n_input)
+    # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)            
+    # Permuting batch_size and n_steps
+    x = tf.transpose(x, [1, 0, 2])
+    # Reshaping to (n_steps*batch_size, n_input)
+    x = tf.reshape(x, [-1, n_input])
+    # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
+    x = tf.split(x, n_steps, 0)            
+    # Define a lstm cell with tensorflow
+    lstm_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True)
+    if is_train:
+        lstm_cell = rnn.DropoutWrapper(lstm_cell,output_keep_prob=dropout_keep_rate)
+    stacked_lstm = rnn.MultiRNNCell([lstm_cell] * stacked_layers,
+                                         state_is_tuple=True)
+    # Get lstm cell output
+    outputs, states = rnn.static_rnn(stacked_lstm, x, dtype=tf.float32)            
+    # Linear activation, using rnn inner loop last output
+    if is_train:
+        pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
+    else:
+        pred = tf.matmul(outputs[-1], weights['out']*dropout_keep_rate) + biases['out']  
+    return pred, weights['out']        
+
+def BiRNN(x, weights, biases):
+    x = tf.transpose(x, [1, 0, 2])
+    x = tf.reshape(x, [-1, n_input])
+    x = tf.split(x, n_steps, 0)
+
+    # Define lstm cells with tensorflow
+    # Forward direction cell
+    lstm_fw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+    # Backward direction cell
+    lstm_bw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+
+    # Get lstm cell output
+    outputs, _, _ = rnn.static_bidirectional_rnn(lstm_fw_cell, lstm_bw_cell, x,
+                                          dtype=tf.float32)
+    # Linear activation, using rnn inner loop last output
+    if is_train:
+        pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
+    else:
+        pred = tf.matmul(outputs[-1], weights['out']*dropout_keep_rate) + biases['out']  
+    return pred, weights['out']        
+
+
 graph = tf.Graph()
 with graph.as_default():
     global_step = tf.Variable(0, trainable=False)
@@ -68,42 +116,20 @@ with graph.as_default():
     x = tf.placeholder("float", [None, n_steps, n_input])
     y = tf.placeholder("float", [None, n_classes])
     reg_lambda = tf.placeholder(tf.float32)
+    mult = 2 if bidirectional==True else 1
     
     # Define weights
     weights = {
-        'out': tf.Variable(tf.random_normal([n_hidden, n_classes]))
+        'out': tf.Variable(tf.random_normal([n_hidden*mult, n_classes]))
     }
     biases = {
         'out': tf.Variable(tf.random_normal([n_classes]))
     }
     
-    
-    def RNN(x, weights, biases):            
-        # Prepare data shape to match `rnn` function requirements
-        # Current data input shape: (batch_size, n_steps, n_input)
-        # Required shape: 'n_steps' tensors list of shape (batch_size, n_input)            
-        # Permuting batch_size and n_steps
-        x = tf.transpose(x, [1, 0, 2])
-        # Reshaping to (n_steps*batch_size, n_input)
-        x = tf.reshape(x, [-1, n_input])
-        # Split to get a list of 'n_steps' tensors of shape (batch_size, n_input)
-        x = tf.split(x, n_steps, 0)            
-        # Define a lstm cell with tensorflow
-        lstm_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0, state_is_tuple=True)
-        if is_train:
-            lstm_cell = rnn.DropoutWrapper(lstm_cell,output_keep_prob=dropout_keep_rate)
-        stacked_lstm = rnn.MultiRNNCell([lstm_cell] * stacked_layers,
-                                             state_is_tuple=True)
-        # Get lstm cell output
-        outputs, states = rnn.static_rnn(stacked_lstm, x, dtype=tf.float32)            
-        # Linear activation, using rnn inner loop last output
-        if is_train:
-            pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
-        else:
-            pred = tf.matmul(outputs[-1], weights['out']*dropout_keep_rate) + biases['out']  
-        return pred, weights['out']        
-    
-    pred, weights = RNN(x, weights, biases)
+    if bidirectional==True:
+       pred, weights = BiRNN(x, weights, biases) 
+    else:
+        pred, weights = RNN(x, weights, biases)
     
     # Define loss and optimizer
     cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y)) +\
