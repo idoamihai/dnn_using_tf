@@ -5,15 +5,15 @@ from tensorflow.contrib import rnn
 import numpy as np
 import os
 
-def import_mnist():
+def import_mnist(limit=1000):
     from tensorflow.examples.tutorials.mnist import input_data
     mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
-    x_train = mnist.train.images[:1000,:]
-    y_train = mnist.train.labels[:1000,:]
-    x_valid = mnist.validation.images[:1000,:]
-    y_valid = mnist.validation.labels[:1000,:]
-    x_test = mnist.test.images[:1000,:]
-    y_test = mnist.test.labels[:1000,:]
+    x_train = mnist.train.images[:limit,:]
+    y_train = mnist.train.labels[:limit,:]
+    x_valid = mnist.validation.images[:limit,:]
+    y_valid = mnist.validation.labels[:limit,:]
+    x_test = mnist.test.images[:limit,:]
+    y_test = mnist.test.labels[:limit,:]
     # Network Parameters
     n_input = 28 # MNIST data input (img shape: 28*28)
     n_steps = 28 # timesteps
@@ -22,11 +22,11 @@ def import_mnist():
 def vectorize_labels(y):
     n_classes = len(set(y))
     y_vect = np.zeros([len(y),n_classes])
-    y_vect[np.arange(len(y)), y] = 1
+    y_vect[np.arange(len(y)), y.astype(int)] = 1
     return y_vect
 
 
-def batch_data(x,y,batch_size):
+def batch_data(x,y,batch_size):             
     idx = range(len(y))
     np.random.shuffle(idx)
     x,y = x[idx],y[idx]        
@@ -36,7 +36,6 @@ def batch_data(x,y,batch_size):
     batched_data = [(i,j) for i,j in zip(batch_x,batch_y)]
     batched_data = iter(batched_data) 
     return batched_data
-
     
 def RNN(x, weights, biases, dropout_keep_rate, stacked_layers, n_hidden, n_steps, n_input, is_train):            
     # Prepare data shape to match `rnn` function requirements
@@ -93,15 +92,15 @@ class RNN_model:
     
     def __init__(self):
         self.learning_rate_init = 0.001
-        self.training_iters = 10
+        self.training_iters = 100
         self.batch_size = 12
         self.display_step = 1
         self.stacked_layers = 1
-        self.patience_initial = 0.0
+        self.patience_initial = 0
         self.patience = 30
         self.improvement_min_perc = 0.0
-        self.dropout_keep_rate = 1.0
-        self.l2_reg = 0.0
+        self.dropout_keep_rate = 0.5
+        self.l2_reg = 0.001
         self.opt_function = tf.train.AdamOptimizer()
         self.bidirectional = True
         self.exponential = False
@@ -140,11 +139,13 @@ class RNN_model:
                 reg_lambda = tf.placeholder(tf.float32)
                 mult = 2 if params['bidirectional'] ==True else 1                
                 # Define weights
+                glorot_lim = tf.sqrt(6.0 / (n_input*n_steps + n_classes))
                 weights = {
-                    'out': tf.Variable(tf.random_normal([params['n_hidden']*mult, n_classes]))
+                    'out': tf.Variable(tf.random_uniform([params['n_hidden']*mult, n_classes],
+                                                         minval=-glorot_lim,maxval=glorot_lim))
                 }
                 biases = {
-                    'out': tf.Variable(tf.random_normal([n_classes]))
+                    'out': tf.Variable(tf.zeros([n_classes]))
                 }
                 
                 if params['bidirectional']==True:
@@ -213,7 +214,7 @@ class RNN_model:
                         # Reshape data to get 28 seq of 28 elements
                         batch_x = batch_x.reshape((batch_x.shape[0], n_steps, n_input))
                         # Run optimization op (backprop)
-                        _,summary = sess.run((optimizer,merged_summary_op), 
+                        _,acc,loss,summary = sess.run((optimizer,accuracy,cost,merged_summary_op), 
                                  feed_dict={x: batch_x, y: batch_y,reg_lambda:params['l2_reg']})
                         summary_writer.add_summary(summary, iteration)
                     if iteration % params['display_step'] == 0:
@@ -224,8 +225,10 @@ class RNN_model:
                                                             reg_lambda:0.0})
                         summary_valid.add_summary(vsummary,iteration)
                         print("Iter %d" %(iteration)+ ", Minibatch Loss= " + \
-                              "{:.6f}".format(vloss) + ", Training Accuracy= " + \
-                              "{:.5f}".format(vacc))            
+                              "{:.6f}".format(loss) + ", Training Accuracy= " + \
+                              "{:.5f}".format(acc) + ", Validation Accuracy= " + \
+                               "{:.5f}".format(vacc) +", Validataion Loss = " + \
+                                "{:.6f}".format(vloss))            
                         if vloss < best_validation_loss:
                             saver.save(sess, params['path']+'lstm_best.ckpt')
                             if vloss < best_validation_loss*params['improvement_min_perc']:
