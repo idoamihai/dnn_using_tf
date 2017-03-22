@@ -16,18 +16,18 @@ handle 28 sequences of 28 steps for every sample.
 '''
 path = os.getcwd()
 
-x_train = mnist.train.images[:10000,:]
-y_train = mnist.train.labels[:10000,:]
-x_valid = mnist.validation.images[:10000,:]
-y_valid = mnist.validation.labels[:10000,:]
-x_test = mnist.test.images[:10000,:]
-y_test = mnist.test.labels[:10000,:]
+x_train = mnist.train.images[:1000,:]
+y_train = mnist.train.labels[:1000,:]
+x_valid = mnist.validation.images[:1000,:]
+y_valid = mnist.validation.labels[:1000,:]
+x_test = mnist.test.images[:1000,:]
+y_test = mnist.test.labels[:1000,:]
 
 
 # Parameters
 learning_rate_init = 0.001
-training_iters = 20
-batch_size = 128
+training_iters = 10
+batch_size = 12
 display_step = 1
 
 # Network Parameters
@@ -42,6 +42,7 @@ patience = 30
 improvement_min_perc = 0.0
 dropout_keep_rate = 1.0
 l2_reg = 0.0
+opt_function = tf.train.AdamOptimizer(learning_rate=learning_rate_init)
 
 is_train=True
 run_test=True
@@ -136,13 +137,13 @@ with graph.as_default():
                          reg_lambda * tf.nn.l2_loss(weights)
     with tf.name_scope('optimizer'):
         #opt_function = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-        opt_function = tf.train.AdamOptimizer(learning_rate=learning_rate_init)
+        #opt_function = tf.train.AdamOptimizer(learning_rate=learning_rate_init)
         gradients = opt_function.compute_gradients(cost)
         capped_gradients = [(tf.clip_by_norm(grad, clip_norm = 5.0), var) for grad, var in gradients]
         optimizer = opt_function.apply_gradients(capped_gradients)
     # Summarize all gradients
     for grad, var in gradients:
-        tf.summary.histogram(var.name + '/gradient', grad)
+        tf.summary.histogram(var.name + '/param_gradients', grad)
     
     # Evaluate model
     correct_pred = tf.equal(tf.argmax(pred,1), tf.argmax(y,1))
@@ -200,7 +201,7 @@ with tf.Session(graph=graph) as sess:
                 patience_steps += 1
             if ((patience_steps >= patience_initial) and (iteration >= patience)):
                 saver.restore(sess, path+'lstm_best.ckpt')
-                test_data = x_test.reshape((-1,n_timesteps,n_input))
+                test_data = x_test.reshape((-1,n_steps,n_input))
                 print("Testing Accuracy:", \
                       sess.run(accuracy, feed_dict={x: test_data, y: y_test}))
                 print ('saved model iteration %s' %str(best_iteration_step))
