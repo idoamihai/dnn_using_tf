@@ -26,15 +26,13 @@ def vectorize_labels(y):
     return y_vect
 
 
-def batch_data(x,y,batch_size):             
-    idx = range(len(y))
+def batch_data(x,batch_size):             
+    idx = range(len(x))
     np.random.shuffle(idx)
-    x,y = x[idx],y[idx]        
-    total_batches = int(len(y)/batch_size)
+    x = x[idx]     
+    total_batches = int(len(x)/batch_size)
     batch_x = np.array_split(x,total_batches)
-    batch_y = np.array_split(y,total_batches)
-    batched_data = [(i,j) for i,j in zip(batch_x,batch_y)]
-    batched_data = iter(batched_data) 
+    batched_data = iter(batch_x) 
     return batched_data
 
 def plot_reconstructions(original_images,original_labels,
@@ -66,12 +64,12 @@ class autoencoder_sparse:
     
     def run_mnist(self):
         x_train,y_train,x_valid,y_valid,x_test,y_test,n_input = import_mnist()
-        mnist_preds = autoencoder_sparse.build_model(self,x_train,y_train,
+        mnist_preds = autoencoder_sparse.build_model(self,x_train,
                                             n_input,run_test=True,
-                                            x_test=x_test,y_test=y_test)
+                                            x_test=x_test)
         return mnist_preds
     
-    def build_model(self,x_train,y_train,n_input,**kwargs):
+    def build_model(self,x_train,n_input,**kwargs):
             params = autoencoder_sparse.dump(self)
             params.update(kwargs)  
             graph = tf.Graph()
@@ -128,20 +126,18 @@ class autoencoder_sparse:
                 # Launch the graph
                 with tf.Session() as sess:
                     if 'x_test' and 'y_test' in params:
-                        x_test, y_test = params['x_test'],params['y_test']
-                        if len(np.shape(y_test)) == 1:
-                            y_test = vectorize_labels(y_test)                    
+                        x_test = params['x_test']
                     else:
-                         x_test, y_test = x_train,y_train                  
+                         x_test = x_train                 
                     saver = tf.train.Saver()
                     summary_writer = tf.summary.FileWriter(logdir=params['path']+'/logdir/autoe_train', graph=tf.get_default_graph())
                     sess.run(init)
                     # Training cycle
                     for iteration in range(params['training_iters']):
-                        total_batches = int(len(y_train)/params['batch_size'])
-                        batched_data = batch_data(x_train,y_train,params['batch_size'])
+                        total_batches = int(len(x_train)/params['batch_size'])
+                        batched_data = batch_data(x_train,params['batch_size'])
                         for batch in range(total_batches):
-                            batch_x, batch_y = batched_data.next()
+                            batch_x = batched_data.next()
                             # Run optimization op (backprop) and cost op (to get loss value)
                             _, c = sess.run([optimizer, cost], feed_dict={X: batch_x})
                         # Display logs per epoch step
