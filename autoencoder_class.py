@@ -16,8 +16,7 @@ def import_mnist(limit=10000):
     x_test = mnist.test.images[:limit,:]
     y_test = mnist.test.labels[:limit,:]
     # Network Parameters
-    n_input = 784 # MNIST data input (img shape: 28*28)
-    return x_train,y_train,x_valid,y_valid,x_test,y_test,n_input
+    return x_train,y_train,x_valid,y_valid,x_test,y_test
 
 def vectorize_labels(y):
     n_classes = len(set(y))
@@ -35,8 +34,7 @@ def batch_data(x,batch_size):
     batched_data = iter(batch_x) 
     return batched_data
 
-def plot_reconstructions(original_images,original_labels,
-                         decoded_images,examples_to_show,image_dims):
+def plot_reconstructions(original_images,decoded_images,examples_to_show,image_dims):
     # Compare original images with their reconstructions
     f, a = plt.subplots(2, examples_to_show, 
                         figsize=(examples_to_show, 2))
@@ -63,13 +61,14 @@ class autoencoder_sparse:
         return dict(self.__dict__)
     
     def run_mnist(self):
-        x_train,y_train,x_valid,y_valid,x_test,y_test,n_input = import_mnist()
+        x_train,y_train,x_valid,y_valid,x_test,y_test = import_mnist()
         mnist_preds = autoencoder_sparse.build_model(self,x_train,
-                                            n_input,run_test=True,
+                                            run_test=True,
                                             x_test=x_test)
         return mnist_preds
     
-    def build_model(self,x_train,n_input,**kwargs):
+    def build_model(self,x_train,**kwargs):
+            n_input = x_train.shape[1]
             params = autoencoder_sparse.dump(self)
             params.update(kwargs)  
             graph = tf.Graph()
