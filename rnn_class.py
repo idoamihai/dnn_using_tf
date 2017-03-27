@@ -25,7 +25,6 @@ def vectorize_labels(y):
     y_vect[np.arange(len(y)), y.astype(int)] = 1
     return y_vect
 
-
 def batch_data(x,y,batch_size):             
     idx = range(len(y))
     np.random.shuffle(idx)
@@ -62,7 +61,6 @@ def RNN(x, weights, biases, dropout_keep_rate, stacked_layers, n_hidden, n_steps
         pred = tf.matmul(outputs[-1], weights['out']*dropout_keep_rate) + biases['out']  
     return pred, weights['out']        
 
-
 def BiRNN(x, weights, biases, dropout_keep_rate, stacked_layers, n_hidden, n_steps, n_input, is_train):
     x = tf.transpose(x, [1, 0, 2])
     x = tf.reshape(x, [-1, n_input])
@@ -86,14 +84,53 @@ def BiRNN(x, weights, biases, dropout_keep_rate, stacked_layers, n_hidden, n_ste
         pred = tf.matmul(outputs[-1], weights['out']) + biases['out'] 
     else:
         pred = tf.matmul(outputs[-1], weights['out']*dropout_keep_rate) + biases['out']  
-    return pred, weights['out']        
+    return pred, weights['out']    
+
+def pad_data(samples,n_samples=1000, max_seq_len=20, min_seq_len=3,
+             max_value=1000):
+    max_seq_len = np.max([len(f) for f in samples])
+    data = []
+    for i in samples:
+        # Pad sequence for dimension consistency
+        padded_sample = np.append(i,[[0.] for j in range(max_seq_len - len(i))])
+        data.append(padded_sample)
+    return data
+
+def dynamicRNN(x, seqlen, weights, biases, n_hidden):
+    max_seq_len = np.max([len(f) for f in x])
+    x = tf.transpose(x, [1, 0, 2])
+    x = tf.reshape(x, [-1, 1])
+    x = tf.split(axis=0, num_or_size_splits=max_seq_len, value=x)
+    lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden)
+    outputs, states = tf.contrib.rnn.static_rnn(lstm_cell, x, dtype=tf.float32,
+                                sequence_length=seqlen)
+    # When performing dynamic calculation, we must retrieve the last
+    # dynamically computed output, i.e., if a sequence length is 10, we need
+    # to retrieve the 10th output.
+    # However TensorFlow doesn't support advanced indexing yet, so we build
+    # a custom op that for each sample in batch size, get its length and
+    # get the corresponding relevant output.
+
+    # 'outputs' is a list of output at every timestep, we pack them in a Tensor
+    # and change back dimension to [batch_size, n_step, n_input]
+    outputs = tf.stack(outputs)
+    outputs = tf.transpose(outputs, [1, 0, 2])
+    # Hack to build the indexing and retrieve the right output.
+    batch_size = tf.shape(outputs)[0]
+    # Start indices for each sample
+    index = tf.range(0, batch_size) * max_seq_len + (seqlen - 1)
+    # Indexing
+    outputs = tf.gather(tf.reshape(outputs, [-1, n_hidden]), index)
+    # Linear activation, using outputs computed above
+    return tf.matmul(outputs, weights['out']) + biases['out']
+
 
 class RNN_model:
     
     def __init__(self):
         self.learning_rate_init = 0.001
         self.training_iters = 100
-        self.batch_size = 12
+        self.batch_size = 10
         self.display_step = 1
         self.stacked_layers = 1
         self.patience_initial = 0
@@ -187,71 +224,79 @@ class RNN_model:
                 merged_summary_op = tf.summary.merge_all()             
             # Launch the graph
             with tf.Session(graph=graph) as sess:
-                if 'x_valid' and 'y_valid' in params:
-                    x_valid, y_valid = params['x_valid'],params['y_valid']
-                    if len(np.shape(y_valid)) == 1:
-                        y_valid = vectorize_labels(y_valid)
-                else:
-                     x_valid, y_valid = x_train,y_train
-                if 'x_test' and 'y_test' in params:
-                    x_test, y_test = params['x_test'],params['y_test']
-                    if len(np.shape(y_test)) == 1:
-                        y_test = vectorize_labels(y_test)                    
-                else:
-                     x_test, y_test = x_train,y_train                   
                 saver = tf.train.Saver()
-                summary_writer = tf.summary.FileWriter(logdir=params['path']+'/logdir/train', graph=tf.get_default_graph())
-                summary_valid = tf.summary.FileWriter(logdir=params['path']+'/logdir/validation', graph=tf.get_default_graph())
-                sess.run(init)
-                best_validation_loss = np.inf
-                best_iteration_step = 0
-                patience_steps = 0
-                for iteration in range(params['training_iters']):
-                    total_batches = int(len(y_train)/params['batch_size'])
-                    batched_data = batch_data(x_train,y_train,params['batch_size'])
-                    for batch in range(total_batches):
-                        batch_x, batch_y = batched_data.next()
-                        # Reshape data to get 28 seq of 28 elements
-                        batch_x = batch_x.reshape((batch_x.shape[0], n_steps, n_input))
-                        # Run optimization op (backprop)
-                        _,acc,loss,summary = sess.run((optimizer,accuracy,cost,merged_summary_op), 
-                                 feed_dict={x: batch_x, y: batch_y,reg_lambda:params['l2_reg']})
-                        summary_writer.add_summary(summary, iteration)
-                    if iteration % params['display_step'] == 0:
-                        # Calculate batch accuracy
-                        x_val = x_valid.reshape((x_valid.shape[0],n_steps,n_input))
-                        vacc,vloss,vsummary = sess.run((accuracy,cost,merged_summary_op), 
-                                              feed_dict={x: x_val, y: y_valid,
-                                                            reg_lambda:0.0})
-                        summary_valid.add_summary(vsummary,iteration)
-                        print("Iter %d" %(iteration)+ ", Minibatch Loss= " + \
-                              "{:.6f}".format(loss) + ", Training Accuracy= " + \
-                              "{:.5f}".format(acc) + ", Validation Accuracy= " + \
-                               "{:.5f}".format(vacc) +", Validataion Loss = " + \
-                                "{:.6f}".format(vloss))            
-                        if vloss < best_validation_loss:
-                            saver.save(sess, params['path']+'lstm_best.ckpt')
-                            if vloss < best_validation_loss*params['improvement_min_perc']:
-                                patience_steps = 0
+                if is_train:
+                    if 'x_valid' and 'y_valid' in params:
+                        x_valid, y_valid = params['x_valid'],params['y_valid']
+                        if len(np.shape(y_valid)) == 1:
+                            y_valid = vectorize_labels(y_valid)
+                    else:
+                         x_valid, y_valid = x_train,y_train
+                    if 'x_test' and 'y_test' in params:
+                        x_test, y_test = params['x_test'],params['y_test']
+                        if len(np.shape(y_test)) == 1:
+                            y_test = vectorize_labels(y_test)                    
+                    else:
+                         x_test, y_test = x_train,y_train                   
+                    summary_writer = tf.summary.FileWriter(logdir=params['path']+'/logdir/train', graph=tf.get_default_graph())
+                    summary_valid = tf.summary.FileWriter(logdir=params['path']+'/logdir/validation', graph=tf.get_default_graph())
+                    sess.run(init)
+                    best_validation_loss = np.inf
+                    best_iteration_step = 0
+                    patience_steps = 0
+                    for iteration in range(params['training_iters']):
+                        total_batches = int(len(y_train)/params['batch_size'])
+                        batched_data = batch_data(x_train,y_train,params['batch_size'])
+                        for batch in range(total_batches):
+                            batch_x, batch_y = batched_data.next()
+                            # Reshape data to get 28 seq of 28 elements
+                            batch_x = batch_x.reshape((batch_x.shape[0], n_steps, n_input))
+                            # Run optimization op (backprop)
+                            _,acc,loss,summary = sess.run((optimizer,accuracy,cost,merged_summary_op), 
+                                     feed_dict={x: batch_x, y: batch_y,reg_lambda:params['l2_reg']})
+                            summary_writer.add_summary(summary, iteration)
+                        if iteration % params['display_step'] == 0:
+                            # Calculate batch accuracy
+                            x_val = x_valid.reshape((x_valid.shape[0],n_steps,n_input))
+                            vacc,vloss,vsummary = sess.run((accuracy,cost,merged_summary_op), 
+                                                  feed_dict={x: x_val, y: y_valid,
+                                                                reg_lambda:0.0})
+                            summary_valid.add_summary(vsummary,iteration)
+                            print("Iter %d" %(iteration)+ ", Minibatch Loss= " + \
+                                  "{:.6f}".format(loss) + ", Training Accuracy= " + \
+                                  "{:.5f}".format(acc) + ", Validation Accuracy= " + \
+                                   "{:.5f}".format(vacc) +", Validataion Loss = " + \
+                                    "{:.6f}".format(vloss))            
+                            if vloss < best_validation_loss:
+                                saver.save(sess, params['path']+'lstm_best.ckpt')
+                                if vloss < best_validation_loss*params['improvement_min_perc']:
+                                    patience_steps = 0
+                                else:
+                                    patience_steps += 1 #small improvement
+                                best_validation_loss = vloss
+                                best_iteration_step = iteration
                             else:
-                                patience_steps += 1 #small improvement
-                            best_validation_loss = vloss
-                            best_iteration_step = iteration
-                        else:
-                            patience_steps += 1
-                        if ((patience_steps >= params['patience_initial']) and (iteration >= params['patience'])):
-                            saver.restore(sess, params['path']+'lstm_best.ckpt')
-                            test_data = x_test.reshape((-1,n_steps,n_input))
-                            print("Testing Accuracy:", \
-                                  sess.run(accuracy, feed_dict={x: test_data, y: y_test}))
-                            print ('saved model iteration %s' %str(best_iteration_step))
-                            break                                
-                if run_test==True:
-                    test_data = x_test.reshape((x_test.shape[0], n_steps, n_input))
+                                patience_steps += 1
+                            if ((patience_steps >= params['patience_initial']) and (iteration >= params['patience'])):
+                                saver.restore(sess, params['path']+'lstm_best.ckpt')
+                                test_data = x_test.reshape((-1,n_steps,n_input))
+                                print("Testing Accuracy:", \
+                                      sess.run(accuracy, feed_dict={x: test_data, y: y_test}))
+                                print ('saved model iteration %s' %str(best_iteration_step))
+                                break                                
+                    if run_test==True:
+                        test_data = x_test.reshape((x_test.shape[0], n_steps, n_input))
+                        test_label = y_test
+                        predictions = sess.run(pred, feed_dict={x: test_data, y: test_label})
+                        return predictions
+                    print("Optimization Finished!")
+                else:
+                    x_test,y_test = x_train,y_train
+                    saver.restore(sess, params['path']+'lstm_best.ckpt')
+                    test_data = x_test.reshape((-1,n_steps,n_input))
                     test_label = y_test
                     predictions = sess.run(pred, feed_dict={x: test_data, y: test_label})
-                    return predictions
-                print("Optimization Finished!")
+                    return predictions                    
             
 
 
